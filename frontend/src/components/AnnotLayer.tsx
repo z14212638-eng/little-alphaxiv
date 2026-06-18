@@ -22,6 +22,9 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   const annots = useAnnotations((s) =>
     s.annots.filter((a) => a.page === pageNumber && a.type !== "highlight")
   );
+  const highlights = useAnnotations((s) =>
+    s.annots.filter((a) => a.page === pageNumber && a.type === "highlight")
+  );
   const selectedId = useAnnotations((s) => s.selectedId);
   const tool = useAnnotations((s) => s.tool);
   const color = useAnnotations((s) => s.color);
@@ -236,6 +239,25 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
           }
           return null;
         })}
+        {/* highlight click-targets + selected outline (default mode only) */}
+        {tool === "none" && highlights.map((a) =>
+          (a.highlight?.rects ?? []).map((r, i) => {
+            const p = denormalizeRect(r, pageSize);
+            const selected = a.id === selectedId;
+            return (
+              <rect
+                key={a.id + "-ht-" + i}
+                x={p.x} y={p.y} width={p.w} height={p.h}
+                fill="transparent"
+                stroke={selected ? "var(--accent)" : "transparent"}
+                strokeWidth={1}
+                strokeDasharray={selected ? "3 2" : undefined}
+                style={{ pointerEvents: "all", cursor: "pointer" }}
+                onPointerDown={(e) => { e.stopPropagation(); select(a.id); }}
+              />
+            );
+          })
+        )}
         {/* draft rect */}
         {draftRect && (
           <rect
@@ -289,12 +311,15 @@ function TextInputBox({
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const committedRef = useRef(false);
   const [val, setVal] = useState("");
   // focus on mount
   if (ref.current && document.activeElement !== ref.current) {
     setTimeout(() => ref.current?.focus(), 0);
   }
   function finish() {
+    if (committedRef.current) return;
+    committedRef.current = true;
     const el = ref.current;
     const w = el?.offsetWidth ?? 120;
     const h = el?.offsetHeight ?? 24;

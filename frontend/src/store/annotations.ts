@@ -76,13 +76,12 @@ export const useAnnotations = create<AnnotationUIState>((set, get) => ({
   },
 
   addAnnot: (partial) => {
-    const { arxivId, color } = get();
+    const { arxivId } = get();
     if (!arxivId) return;
     const annot: Annotation = {
       ...partial,
       id: newId(),
       arxiv_id: arxivId,
-      color,
       createdAt: Date.now(),
     };
     const op: Op = { kind: "add", annot };
