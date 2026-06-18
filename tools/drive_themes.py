@@ -16,6 +16,7 @@ The theme id list must stay in sync with frontend/src/themes.ts THEMES.
 from __future__ import annotations
 
 import sys
+import os
 import codecs
 from pathlib import Path
 
@@ -28,7 +29,9 @@ sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, errors="replace")
 OUT = Path(__file__).parent / "shots" / "themes"
 OUT.mkdir(parents=True, exist_ok=True)
 
-APP = "http://127.0.0.1:5173"
+# Override with APP_URL when running the worktree's vite on a non-default port
+# (e.g. APP_URL=http://127.0.0.1:5174 python tools/drive_themes.py).
+APP = os.environ.get("APP_URL", "http://127.0.0.1:5173")
 MOCK_PROVIDER = {
     "name": "Mock",
     "base_url": "http://127.0.0.1:5050/v1",
