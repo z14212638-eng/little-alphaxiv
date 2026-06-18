@@ -2126,6 +2126,8 @@ Append the following to the END of `frontend/src/index.css` (do not modify any e
   background: #0d1117; border-radius: 6px; font-size: 13px; line-height: 1.5;
 }
 .code-block code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+/* override github-dark.css `pre code.hljs { padding: 1em }` so the code isn't double-padded (the .code-block pre already has 12px) */
+.code-block pre code.hljs { padding: 0; background: transparent; }
 ```
 
 - [ ] **Step 2: Typecheck + manual verify**
