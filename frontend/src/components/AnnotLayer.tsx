@@ -27,6 +27,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   );
   const selectedId = useAnnotations((s) => s.selectedId);
   const tool = useAnnotations((s) => s.tool);
+  const highlightOn = useAnnotations((s) => s.highlightOn);
   const color = useAnnotations((s) => s.color);
   const addAnnot = useAnnotations((s) => s.addAnnot);
   const setTool = useAnnotations((s) => s.setTool);
@@ -240,7 +241,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
           return null;
         })}
         {/* highlight click-targets + selected outline (default mode only) */}
-        {tool === "none" && highlights.map((a) =>
+        {tool === "none" && !highlightOn && highlights.map((a) =>
           (a.highlight?.rects ?? []).map((r, i) => {
             const p = denormalizeRect(r, pageSize);
             const selected = a.id === selectedId;
@@ -335,7 +336,7 @@ function TextInputBox({
       onBlur={finish}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(); }
-        if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+        if (e.key === "Escape") { e.preventDefault(); committedRef.current = true; onCancel(); }
       }}
       rows={1}
     />
