@@ -37,6 +37,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   const [draftPoints, setDraftPoints] = useState<{ x: number; y: number }[]>([]);
   const [textBox, setTextBox] = useState<{ x: number; y: number } | null>(null);
   const drawingRef = useRef(false);
+  const draggedRef = useRef(false);
 
   // selection drag state
   const dragRef = useRef<
@@ -122,6 +123,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
     if (tool !== "none") return;
     e.stopPropagation();
     select(a.id);
+    draggedRef.current = false;
     const p = toLayerPx(e);
     dragRef.current = { mode: "move", annot: a, startPx: p, orig: a };
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -130,6 +132,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   function startResize(e: React.PointerEvent, a: Annotation, handle: string) {
     if (tool !== "none") return;
     e.stopPropagation();
+    draggedRef.current = false;
     const p = toLayerPx(e);
     dragRef.current = { mode: "resize", annot: a, handle, startPx: p, orig: a };
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -138,6 +141,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   function onDragMove(e: React.PointerEvent) {
     const d = dragRef.current;
     if (!d) return;
+    draggedRef.current = true;
     const p = toLayerPx(e);
     const dxN = (p.x - d.startPx.x) / pageSize.w;
     const dyN = (p.y - d.startPx.y) / pageSize.h;
@@ -151,6 +155,12 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
   function onDragUp() {
     const d = dragRef.current;
     if (!d) return;
+    if (!draggedRef.current) {
+      // bare click to select — no move/resize op
+      dragRef.current = null;
+      setDragPreview(null);
+      return;
+    }
     const preview = dragPreview ?? d.orig;
     if (d.mode === "move") moveAnnot(d.orig, preview);
     else resizeAnnot(d.orig, preview);
@@ -210,6 +220,20 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
               </g>
             );
           }
+          if (cur.type === "text" && cur.text) {
+            if (selectedId === a.id && tool === "none") {
+              const tpx = denormalizeRect({ x: cur.text.x, y: cur.text.y, w: cur.text.w, h: cur.text.h }, pageSize);
+              return (
+                <g key={a.id}>
+                  <SelectionHandles
+                    rect={tpx}
+                    onHandleDown={(h, e) => startResize(e, a, h)}
+                  />
+                </g>
+              );
+            }
+            return null;
+          }
           return null;
         })}
         {/* draft rect */}
@@ -237,7 +261,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
           <div
             key={a.id}
             className={"annot-text" + (selected ? " selected" : "")}
-            style={{ left: px.x, top: px.y, width: px.w, minHeight: px.h, color: a.color, fontSize: t.fontSize * pageSize.w, cursor: tool === "none" ? "move" : "default" }}
+            style={{ left: px.x, top: px.y, width: px.w, minHeight: px.h, color: a.color, fontSize: t.fontSize * pageSize.w, cursor: tool === "none" ? "move" : "default", pointerEvents: tool === "none" ? "auto" : "none" }}
             onPointerDown={(e) => { if (tool === "none") startMove(e, a); }}
           >
             {t.content}
@@ -318,7 +342,7 @@ function SelectionHandles({
           key={h}
           x={hx - hs / 2} y={hy - hs / 2} width={hs} height={hs}
           fill="#fff" stroke="var(--accent)" strokeWidth={1}
-          style={{ cursor: "pointer" }}
+          style={{ cursor: "pointer", pointerEvents: "all" }}
           onPointerDown={(e) => onHandleDown(h, e)}
         />
       ))}
