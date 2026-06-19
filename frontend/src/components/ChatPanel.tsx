@@ -16,6 +16,7 @@ import { useSettings } from "../store/settings";
 import { runConversation, generateConversationTitle } from "../lib/llm";
 import { truncateToFit, resolveForConv, estimateTokens, computeCalibration } from "../lib/contextBudget";
 import { resolveVisionFallback } from "../lib/visionFallback";
+import { isAbortError } from "../lib/chatStop";
 import * as db from "../lib/db";
 import { openTarget } from "../lib/paperSource";
 import { PaperCard } from "./PaperCard";
@@ -112,6 +113,11 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // AbortController for the current in-flight turn, if any. Null when idle.
+  // Clicking Stop aborts the streaming fetch (runConversation already threads
+  // the signal through to fetch); the catch block distinguishes that user abort
+  // from a real network/upstream error.
+  const abortRef = useRef<AbortController | null>(null);
   // Seed the paper's metadata into IDB (so PaperView/PdfViewer show real
   // title/authors/abstract instead of the bare-id fallback), then open it.
   // arXiv-id papers -> existing /api/pdf path; OA papers -> /api/pdf-url
@@ -174,47 +180,55 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
     if (el) el.scrollTop = el.scrollHeight;
   }, [conversationId]);
 
-  // Handle paste — extract images from clipboard
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          setAttachments((prev) => [
-            ...prev,
-            { type: "image", data_url: dataUrl, name: file.name },
-          ]);
-        };
-        reader.readAsDataURL(file);
-      }
+  // Shared ingest: encode image File(s) to base64 data URLs and append to
+  // attachments. Image-only (matches <input accept="image/*">); non-images
+  // are silently skipped — callers that want a rejection signal (drag-drop)
+  // call pickImageFiles first and pass only images here.
+  const addFiles = useCallback((files: File[]) => {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        setAttachments((prev) => [
+          ...prev,
+          { type: "image", data_url: dataUrl, name: file.name },
+        ]);
+      };
+      reader.readAsDataURL(file);
     }
   }, []);
 
-  // Handle file input (click to upload)
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          setAttachments((prev) => [
-            ...prev,
-            { type: "image", data_url: dataUrl, name: file.name },
-          ]);
-        };
-        reader.readAsDataURL(file);
+  // Handle paste — extract images from clipboard (silent skip for non-images).
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    let hadImage = false;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        hadImage = true;
+        const file = item.getAsFile();
+        if (file) files.push(file);
       }
     }
-    e.target.value = ""; // reset
-  }, []);
+    if (hadImage) {
+      e.preventDefault();
+      addFiles(files);
+    }
+  }, [addFiles]);
+
+  // Handle file input (click to upload).
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) addFiles(Array.from(files));
+    e.target.value = ""; // reset so the same file can be re-selected
+  }, [addFiles]);
+
+  // Handle drag-and-drop image drop (wired to ChatComposer.onDropFiles).
+  const handleDropFiles = useCallback((files: File[]) => {
+    addFiles(files);
+  }, [addFiles]);
 
   if (!conv) return <div className="chat-panel"><p>No conversation.</p></div>;
 
@@ -257,6 +271,10 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
     return messages;
   }
 
+  function stop() {
+    abortRef.current?.abort();
+  }
+
   async function send(override?: string) {
     const text = (override ?? input).trim();
     if ((!text && attachments.length === 0) || busy) return;
@@ -273,6 +291,8 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
     await appendMessages(c.id, [userMsg]);
     setInput("");
     setAttachments([]);
+    const controller = new AbortController();
+    abortRef.current = controller;
     setBusy(true);
     setStatus("Thinking…");
 
@@ -322,6 +342,7 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
           openalex: searchSources.openalex,
           semanticScholar: searchSources.semanticScholar,
         },
+        signal: controller.signal,
         callbacks: {
           onAssistantStart: () => {
             buf = "";
@@ -381,35 +402,49 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
         });
       }
     } catch (e: any) {
-      const rawMsg = e?.message || "error";
       setStreaming("");
       setReasoning("");
-      // When an image was sent to a non-vision model and the user hasn't
-      // configured a vision_model, the provider rejects it with an
-      // image/vision/multimodal error. Surface an actionable hint instead of
-      // the raw upstream body. (When a vision_model IS configured, the
-      // proactive swap above should have prevented this error entirely.)
-      const looksLikeImageError = /image|vision|multimodal|does not support/i.test(rawMsg);
-      const errMsg =
-        hasImage && !provider.vision_model && looksLikeImageError
-          ? "This model doesn't support images. Add a vision model in Settings → Providers."
-          : rawMsg;
-      // Preserve whatever had already streamed before the error so the user
-      // doesn't lose the in-progress answer when a stream is interrupted (e.g.
-      // the connection dropped while the tab was backgrounded). Previously the
-      // partial buffer was discarded and replaced with a bare error message,
-      // so the output the user was reading would vanish mid-reply.
-      if (buf.trim()) {
-        await appendMessages(c.id, [
-          { role: "assistant", content: buf, ui: { error: `Response interrupted: ${errMsg}` } },
-        ]);
+      if (isAbortError(controller.signal, e)) {
+        // User clicked Stop. Keep whatever already streamed this round and mark
+        // it "已停止" (dim, not red). If nothing streamed yet (stopped during a
+        // search/tool phase before any assistant text), append nothing — the
+        // turn just ends cleanly and the next send works normally.
+        if (buf.trim()) {
+          await appendMessages(c.id, [
+            { role: "assistant", content: buf, ui: { stopped: true } },
+          ]);
+        }
       } else {
-        await appendMessages(c.id, [
-          { role: "assistant", content: `⚠️ ${errMsg}`, ui: { error: String(errMsg) } },
-        ]);
+        // Real error (network / upstream), including the image/vision case:
+        // when an image was sent to a non-vision model and the user hasn't
+        // configured a vision_model, the provider rejects it with an
+        // image/vision/multimodal error. Surface an actionable hint instead of
+        // the raw upstream body. (When a vision_model IS configured, the
+        // proactive swap above should have prevented this error entirely.)
+        const rawMsg = e?.message || "error";
+        const looksLikeImageError = /image|vision|multimodal|does not support/i.test(rawMsg);
+        const errMsg =
+          hasImage && !provider.vision_model && looksLikeImageError
+            ? "This model doesn't support images. Add a vision model in Settings → Providers."
+            : rawMsg;
+        // Preserve whatever had already streamed before the error so the user
+        // doesn't lose the in-progress answer when a stream is interrupted (e.g.
+        // the connection dropped while the tab was backgrounded). Previously the
+        // partial buffer was discarded and replaced with a bare error message,
+        // so the output the user was reading would vanish mid-reply.
+        if (buf.trim()) {
+          await appendMessages(c.id, [
+            { role: "assistant", content: buf, ui: { error: `Response interrupted: ${errMsg}` } },
+          ]);
+        } else {
+          await appendMessages(c.id, [
+            { role: "assistant", content: `⚠️ ${errMsg}`, ui: { error: String(errMsg) } },
+          ]);
+        }
       }
       setStatus("");
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   }
@@ -467,9 +502,11 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
         value={input}
         onValueChange={setInput}
         onSend={() => send()}
+        onStop={() => stop()}
         onKeyDown={onKey}
         onPaste={handlePaste}
         onAttach={() => fileInputRef.current?.click()}
+        onDropFiles={handleDropFiles}
         busy={busy}
         placeholder={busy ? "…" : "Message…  (Enter to send, Shift+Enter newline, Ctrl+V to paste images)"}
         attachments={attachments}
@@ -534,6 +571,7 @@ const MessageRow = memo(function MessageRow({
         ""
       )}
       {msg.ui?.error && <div className="msg-error">{msg.ui.error}</div>}
+      {msg.ui?.stopped && <div className="msg-stopped">已停止</div>}
     </div>
   );
 });

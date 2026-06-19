@@ -349,6 +349,7 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
 .msg-assistant { color: var(--text); }
 .msg-assistant.pending { color: var(--text-dim); }
 .msg-error { color: var(--danger); font-size: 12px; margin-top: 6px; }
+.msg-stopped { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
 .msg-reasoning {
   background: var(--reasoning-bg); border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 10px 14px; color: var(--text-dim); font-size: 13px; line-height: 1.5;
@@ -375,8 +376,35 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-2);
+  position: relative; /* anchor for the drop overlay */
 }
 .chat-composer:focus-within { border-color: var(--accent); }
+/* Drag-over affordance: tints the whole composer with a dashed accent border
+   and a centered prompt. pointer-events:none so the drop lands on the
+   container, not the overlay. */
+.chat-composer.drag-active {
+  border-color: var(--accent);
+}
+.chat-composer-drop-overlay {
+  position: absolute; inset: 0;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); font-size: 14px; font-weight: 600;
+  pointer-events: none;
+  z-index: 2;
+}
+/* Reject toast: in-flow flex child, briefly expands the composer. */
+.chat-composer-reject-toast {
+  margin-top: 6px;
+  padding: 4px 8px;
+  align-self: center;
+  font-size: 12px; color: var(--text-dim);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
 .chat-composer-input {
   /* plain wrapper — the border + radius + bg live on .chat-composer so the
      single box wraps the textarea AND the bottom bar together */
@@ -433,6 +461,10 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
 }
 .composer-send-btn:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent-2); }
 .composer-attach-glyph, .composer-send-glyph { line-height: 1; }
+/* Stop state: square glyph, same accent fill so it reads as an active target. */
+.composer-send-btn.is-stop { background: var(--accent-2); border-color: transparent; }
+.composer-send-btn.is-stop:hover { filter: brightness(1.08); }
+.composer-send-btn.is-stop .composer-send-glyph { font-size: 13px; }
 
 /* ---------- Model pill (dropdown capsule) ---------- */
 .model-pill { position: relative; flex-shrink: 0; }
