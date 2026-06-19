@@ -6,53 +6,9 @@
 // the result as a tool-role message, and re-stream — repeating until the
 // model answers with plain text.
 
-import { streamChat, completeChat, searchArxiv, webSearch } from "./api";
-import type { ChatMessage, Paper, Provider, ToolDef, TokenUsage } from "../types";
-
-export const SEARCH_TOOLS: ToolDef[] = [
-  {
-    type: "function",
-    function: {
-      name: "search_arxiv",
-      description:
-        "Search arXiv for academic papers by keyword, topic, or author. " +
-        "Returns matching papers with title, authors, abstract, and a clickable link to preview the PDF. " +
-        "Use this when the user wants to find, discover, or read research papers. " +
-        "The query should be concise search terms (e.g. 'vision transformer', 'chain of thought reasoning').",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Search terms for arXiv. Concise keywords work best.",
-          },
-          max_results: {
-            type: "number",
-            description: "Max papers to return (default 8).",
-          },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "web_search",
-      description:
-        "General web search (via anysearch) for non-arXiv information: " +
-        "recent news, blog posts, people, products, or anything not an academic paper. " +
-        "Use search_arxiv for finding papers; use web_search for everything else.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Web search query." },
-        },
-        required: ["query"],
-      },
-    },
-  },
-];
+import { streamChat, completeChat, searchArxiv, webSearch, searchOpenAlex, searchSemanticScholar } from "./api";
+import type { ChatMessage, Paper, Provider, TokenUsage } from "../types";
+import { buildSearchTools } from "./paperSource";
 
 interface LoopCallbacks {
   onAssistantStart?: () => void; // a new assistant message is beginning (clear stream buffer)
@@ -75,9 +31,12 @@ export async function runConversation(opts: {
   model?: string; // per-conversation model override
   signal?: AbortSignal;
   callbacks: LoopCallbacks;
+  enabledSources?: { openalex: boolean; s2: boolean };
+  searchSourceCreds?: { openalex: { apiKey: string; email: string }; semanticScholar: { apiKey: string } };
 }): Promise<{ newMessages: ChatMessage[] }> {
-  const { provider, messages, systemPrompt, model: modelOverride, signal, callbacks } = opts;
+  const { provider, messages, systemPrompt, model: modelOverride, signal, callbacks, enabledSources, searchSourceCreds } = opts;
   const effectiveModel = modelOverride || provider.model;
+  const tools = buildSearchTools(enabledSources ?? { openalex: false, s2: false });
 
   // Build the message array sent to the model. Prepend system prompt.
   const apiMessages: unknown[] = [];
@@ -119,7 +78,7 @@ export async function runConversation(opts: {
       provider,
       model: effectiveModel,
       messages: apiMessages,
-      tools: SEARCH_TOOLS,
+      tools,
       signal,
       onDelta: (t) => callbacks.onAssistantDelta?.(t),
       onReasoning: (t) => callbacks.onReasoning?.(t),
@@ -177,6 +136,66 @@ export async function runConversation(opts: {
         newMessages.push(toolMsg);
         callbacks.onToolMessage?.(toolMsg);
       } else if (tc.function.name === "web_search") {
+      } else if (tc.function.name === "search_openalex") {
+        callbacks.onStatus?.("Searching OpenAlex…");
+        try {
+          const res = await searchOpenAlex(
+            args.query ?? "",
+            args.max_results ?? 8,
+            searchSourceCreds?.openalex ?? { apiKey: "", email: "" }
+          );
+          callbacks.onPapers?.(res.results);
+          const toolMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            name: "search_openalex",
+            content: JSON.stringify(res.results.slice(0, 8)),
+            ui: { papers: res.results },
+          };
+          apiMessages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: "search_openalex",
+            content: JSON.stringify(res.results.slice(0, 8)),
+          });
+          newMessages.push(toolMsg);
+          callbacks.onToolMessage?.(toolMsg);
+        } catch (e: any) {
+          const msg = `openalex search failed (${e?.message ?? "error"}); try search_arxiv`;
+          apiMessages.push({ role: "tool", tool_call_id: tc.id, name: "search_openalex", content: msg });
+          newMessages.push({ role: "tool", tool_call_id: tc.id, name: "search_openalex", content: msg });
+          callbacks.onStatus?.("");
+        }
+      } else if (tc.function.name === "search_semantic_scholar") {
+        callbacks.onStatus?.("Searching Semantic Scholar…");
+        try {
+          const res = await searchSemanticScholar(
+            args.query ?? "",
+            args.max_results ?? 8,
+            searchSourceCreds?.semanticScholar?.apiKey
+          );
+          callbacks.onPapers?.(res.results);
+          const toolMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            name: "search_semantic_scholar",
+            content: JSON.stringify(res.results.slice(0, 8)),
+            ui: { papers: res.results },
+          };
+          apiMessages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: "search_semantic_scholar",
+            content: JSON.stringify(res.results.slice(0, 8)),
+          });
+          newMessages.push(toolMsg);
+          callbacks.onToolMessage?.(toolMsg);
+        } catch (e: any) {
+          const msg = `semantic scholar search failed (${e?.message ?? "error"}); try search_arxiv`;
+          apiMessages.push({ role: "tool", tool_call_id: tc.id, name: "search_semantic_scholar", content: msg });
+          newMessages.push({ role: "tool", tool_call_id: tc.id, name: "search_semantic_scholar", content: msg });
+          callbacks.onStatus?.("");
+        }
         callbacks.onStatus?.("Web searching…");
         const res = await webSearch(args.query ?? "", 8);
         const toolMsg: ChatMessage = {
@@ -256,7 +275,7 @@ export async function generateConversationTitle(opts: {
 
   const paperBlock = paperContext
     ? "\n\nPaper being discussed:\n" +
-      `arxiv id: ${paperContext.arxivId ?? ""}\n` +
+      `paper id: ${paperContext.arxivId ?? ""}\n` +
       `title: ${paperContext.title ?? ""}\n` +
       `abstract: ${(paperContext.abstract ?? "").slice(0, 1200)}\n` +
       `full text excerpt: ${(paperContext.fullTextSnippet ?? "").slice(0, 1500)}`

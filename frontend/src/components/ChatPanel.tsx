@@ -96,6 +96,10 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
   const rename = useConversations((s) => s.rename);
   // settings are updated via ChatToolbar callbacks or model selector
   const provider = useSettings((s) => s.getProvider(conv?.provider_id ?? null));
+  // Select the stable searchSources object; derive enabled booleans locally
+  // to avoid returning a fresh object from the selector (zustand footgun).
+  const searchSources = useSettings((s) => s.searchSources);
+  const enabledSources = { openalex: searchSources.openalex.enabled, s2: searchSources.semanticScholar.enabled };
 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -260,8 +264,11 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
         provider,
         messages: history,
         systemPrompt: effectiveSystemPrompt,
-        model: c.model,
-        callbacks: {
+                enabledSources,
+        searchSourceCreds: {
+          openalex: searchSources.openalex,
+          semanticScholar: searchSources.semanticScholar,
+        },        callbacks: {
           onAssistantStart: () => {
             buf = "";
             setStreaming("");
@@ -307,6 +314,7 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
       // Refine the first-turn title into a short LLM summary. Fire-and-forget;
       // the truncated fallback stays if this is slow or fails.
       if (wasFirstTurn) {
+
         void maybeSummarizeTitle({
           convId: c.id,
           type: c.type,
