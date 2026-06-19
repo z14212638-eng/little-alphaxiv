@@ -428,35 +428,54 @@ git commit -m "feat(store): expose hasHistory flag (persisted-history signal for
 - Modify: `frontend/src/index.css`
 
 **Interfaces:**
-- Consumes: `siblingOriginUrl` from `lib/origin.ts` (Task 1).
-- Produces: default export component `<OriginBanner />`. Props: none. Reads dismissal from `localStorage["lax-origin-banner-dismissed"]`; on dismiss, sets that key and hides itself. Renders nothing (returns `null`) when there is no sibling URL or already dismissed. `App.tsx` (Task 4) renders `<OriginBanner />` unconditionally at the top of the shell and relies on the component's own null-return to hide.
+- Consumes: `shouldShowOriginBanner` + `siblingOriginUrl` from `lib/origin.ts` (Task 1); `useConversations((s) => s.hasHistory)` from the store (Task 2).
+- Produces: component `<OriginBanner />` (named export, no props). **Self-gating:** reads `hasHistory` from the store, captures `arrivedViaRedirect` once at mount via a `useState` initializer (`new URLSearchParams(location.search).has("laxredir")` — stable, captured before App's `?laxredir=1` strip effect runs, since children mount before parent effects), reads `dismissed` from `localStorage["lax-origin-banner-dismissed"]`, and returns `null` unless `shouldShowOriginBanner(hostname, protocol, hasHistory, arrivedViaRedirect, dismissed)` is true. On dismiss, sets that localStorage key and flips local state. `App.tsx` (Task 4) renders `<OriginBanner />` unconditionally at the top of the shell; the component's own null-return hides it.
 
 - [ ] **Step 1: Write the component**
 
 Create `frontend/src/components/OriginBanner.tsx`:
 
 ```tsx
-// Recovery banner shown on an empty localhost origin pointing at the sibling
-// loopback host (127.0.0.1), where the user's data may live. Dismissible;
-// dismissal persists per-origin in localStorage so it won't nag again until
-// the key is cleared. The component returns null when there is nothing to
-// show (no sibling URL, or already dismissed) so App.tsx can render it
-// unconditionally.
+// Recovery banner shown on an empty localhost origin (that did NOT arrive via
+// our own 127.0.0.1->localhost redirect) pointing at the sibling loopback host
+// (127.0.0.1), where the user's data may live. Dismissible; dismissal persists
+// per-origin in localStorage so it won't nag again until the key is cleared.
+//
+// Self-gating: returns null whenever shouldShowOriginBanner is false (has
+// history, arrived via redirect, dismissed, or not a loopback dev origin), so
+// App.tsx renders <OriginBanner /> unconditionally.
 
 import { useState } from "react";
-import { siblingOriginUrl } from "../lib/origin";
+import { shouldShowOriginBanner, siblingOriginUrl } from "../lib/origin";
+import { useConversations } from "../store/conversations";
 
 const DISMISS_KEY = "lax-origin-banner-dismissed";
 
 export function OriginBanner() {
+  const hasHistory = useConversations((s) => s.hasHistory);
+  // Capture once at mount, BEFORE App's ?laxredir=1 strip effect runs (child
+  // mounts before parent effects). Stable for the page's lifetime, so the
+  // banner stays suppressed for a redirect-arrival even after the URL is
+  // cleaned and later re-renders occur.
+  const [arrivedViaRedirect] = useState<boolean>(
+    () => new URLSearchParams(location.search).has("laxredir")
+  );
   const [dismissed, setDismissed] = useState<boolean>(
     () => localStorage.getItem(DISMISS_KEY) !== null
   );
 
-  if (dismissed) return null;
+  if (
+    !shouldShowOriginBanner(
+      location.hostname,
+      location.protocol,
+      hasHistory,
+      arrivedViaRedirect,
+      dismissed
+    )
+  ) {
+    return null;
+  }
 
-  // Read location lazily; if we're not on a loopback dev origin there's no
-  // sibling and siblingOriginUrl returns null -> render nothing.
   const url = siblingOriginUrl(
     location.hostname,
     location.protocol,
@@ -465,6 +484,7 @@ export function OriginBanner() {
     location.search,
     location.hash
   );
+  // shouldShowOriginBanner already guarantees loopback/http; url is non-null.
   if (!url) return null;
 
   const dismiss = () => {
@@ -677,6 +697,8 @@ with:
       <Sidebar />
       <Routes>
 ```
+
+(`OriginBanner` is rendered unconditionally; it self-gates via `shouldShowOriginBanner` and returns `null` when there's nothing to show — see Task 3.)
 
 - [ ] **Step 4: Typecheck**
 
