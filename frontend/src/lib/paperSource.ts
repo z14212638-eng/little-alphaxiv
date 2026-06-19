@@ -5,10 +5,12 @@
 import type { Paper, ToolDef } from "../types";
 
 /** Stable opaque id used as IDB key + route param + React key. arXiv id wins
- *  (it opens the existing /api/pdf path); else DOI; else a source-tagged stub. */
+ *  (it opens the existing /api/pdf path); else DOI; else the unique landing-page
+ *  URL (so distinct no-id/no-DOI OA papers don't collide); else a source stub. */
 export function resolvePaperId(p: Paper): string {
   if (p.arxiv_id) return p.arxiv_id;
   if (p.doi) return `doi:${p.doi}`;
+  if (p.external_url) return p.external_url;
   return `${p.source ?? "paper"}:`;
 }
 

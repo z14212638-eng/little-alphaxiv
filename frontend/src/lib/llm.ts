@@ -135,7 +135,6 @@ export async function runConversation(opts: {
         });
         newMessages.push(toolMsg);
         callbacks.onToolMessage?.(toolMsg);
-      } else if (tc.function.name === "web_search") {
       } else if (tc.function.name === "search_openalex") {
         callbacks.onStatus?.("Searching OpenAlex…");
         try {
@@ -196,6 +195,7 @@ export async function runConversation(opts: {
           newMessages.push({ role: "tool", tool_call_id: tc.id, name: "search_semantic_scholar", content: msg });
           callbacks.onStatus?.("");
         }
+      } else if (tc.function.name === "web_search") {
         callbacks.onStatus?.("Web searching…");
         const res = await webSearch(args.query ?? "", 8);
         const toolMsg: ChatMessage = {

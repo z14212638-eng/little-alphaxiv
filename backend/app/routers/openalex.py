@@ -35,11 +35,13 @@ def _parse_work(item: dict[str, Any]) -> dict[str, Any]:
 
     abstract = abstract_from_inverted_index(item.get("abstract_inverted_index"))
 
-    # OpenAlex exposes the best OA PDF under best_oa_location.pdf_url.
-    oa = item.get("best_oa_location") or item.get("open_access") or {}
+    # OpenAlex exposes the best OA PDF under best_oa_location.pdf_url (fall
+    # back to the location's url when pdf_url is null). The open_access object
+    # has no pdf_url field, so it is not a useful fallback here.
+    oa = item.get("best_oa_location") or {}
     oa_pdf_url = ""
     if isinstance(oa, dict):
-        oa_pdf_url = oa.get("pdf_url") or ""
+        oa_pdf_url = oa.get("pdf_url") or oa.get("url") or ""
 
     published = item.get("publication_date") or ""
 
