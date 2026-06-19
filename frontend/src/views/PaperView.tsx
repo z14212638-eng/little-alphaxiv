@@ -20,6 +20,7 @@ import { useConversations } from "../store/conversations";
 import { useSettings } from "../store/settings";
 import { useUi } from "../store/ui";
 import { useAnnotations } from "../store/annotations";
+import { pdfUrlForOa } from "../lib/api";
 import * as db from "../lib/db";
 import type { StylePreset } from "../types";
 
@@ -36,6 +37,7 @@ export function PaperView() {
   const [convIdState, setConvId] = useState<string | null>(convId ?? null);
   const [fullText, setFullText] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(true);
+  const [pdfUrlOverride, setPdfUrlOverride] = useState<string | undefined>(undefined);
   const [showHistory, setShowHistory] = useState(false);
   const initRef = useRef<string | null>(null);
 
@@ -45,6 +47,7 @@ export function PaperView() {
     if (!arxivId) return;
     db.getPaper(arxivId).then((p) => {
       if (p?.full_text) { setFullText(p.full_text); setExtracting(false); }
+      if (p?.oa_pdf_url) setPdfUrlOverride(pdfUrlForOa(p.oa_pdf_url));
     });
   }, [arxivId]);
 
@@ -141,7 +144,7 @@ export function PaperView() {
   return (
     <main className="main-pane paper-view">
       <ResizablePanels
-        left={<PdfViewer arxivId={arxivId} onTextExtracted={onTextExtracted} />}
+        left={<PdfViewer arxivId={arxivId} pdfUrlOverride={pdfUrlOverride} onTextExtracted={onTextExtracted} />}
         right={
           <div className="chat-col-inner">
             {convIdState && (
@@ -253,10 +256,10 @@ function ResizablePanels({ left, right }: { left: React.ReactNode; right: React.
   );
 }
 
-function PAPER_SYSTEM_PREAMBLE(arxivId: string): string {
-  return `You are a research assistant helping the user read and understand the arXiv paper ${arxivId}.
+function PAPER_SYSTEM_PREAMBLE(paperId: string): string {
+  return `You are a research assistant helping the user read and understand the paper ${paperId}.
 The user can see the PDF on the left and is chatting with you on the right.
 The full text of the paper is provided below. Answer questions about its content - methods, datasets, results, limitations, related work - grounded in the provided text.
 If the user asks something not covered in the paper, say so. Be concise and precise. Format answers with markdown.
-You have a search_arxiv tool if the user wants to find related papers.`;
+You have paper-search tools (search_arxiv, and optionally search_openalex / search_semantic_scholar) if the user wants to find related papers.`;
 }

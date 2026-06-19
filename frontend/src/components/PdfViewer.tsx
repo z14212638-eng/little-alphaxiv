@@ -88,7 +88,7 @@ export function PdfViewer({ arxivId, pdfUrlOverride, onLoaded, onTextExtracted }
       docRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arxivId]);
+  }, [arxivId, pdfUrlOverride]);
 
   const zoomIn = useCallback(() => setZoom((z) => Math.min(3, +(z + 0.2).toFixed(2))), []);
   const zoomOut = useCallback(() => setZoom((z) => Math.max(0.4, +(z - 0.2).toFixed(2))), []);
