@@ -16,6 +16,7 @@ import { useSettings } from "../store/settings";
 import { runConversation, generateConversationTitle } from "../lib/llm";
 import { truncateToFit, resolveForConv, estimateTokens, computeCalibration } from "../lib/contextBudget";
 import * as db from "../lib/db";
+import { openTarget } from "../lib/paperSource";
 import { PaperCard } from "./PaperCard";
 import { Markdown } from "./Markdown";
 import { ChatErrorBoundary } from "./ChatErrorBoundary";
@@ -110,8 +111,32 @@ export function ChatPanel({ conversationId, systemPrompt, showPaperLinks = true 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Stable callback so memoized MessageRows don't re-render on every keystroke.
-  const onOpenPaper = useCallback((id: string) => navigate(`/paper/${id}`), [navigate]);
+  // Seed the paper's metadata into IDB (so PaperView/PdfViewer show real
+  // title/authors/abstract instead of the bare-id fallback), then open it.
+  // arXiv-id papers -> existing /api/pdf path; OA papers -> /api/pdf-url
+  // proxy; otherwise -> external landing page in a new tab.
+  const onOpenPaper = useCallback(async (paper: Paper) => {
+    const target = openTarget(paper);
+    if (target.kind === "external") {
+      if (target.url) window.open(target.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    await db.savePaper({
+      arxiv_id: target.id,
+      title: paper.title,
+      authors: paper.authors,
+      abstract: paper.abstract,
+      pdf_url: paper.pdf_url,
+      abs_url: paper.abs_url,
+      published: paper.published,
+      primary_category: paper.primary_category,
+      ...(paper.source ? { source: paper.source } : {}),
+      ...(paper.doi ? { doi: paper.doi } : {}),
+      ...(target.kind === "oa" ? { oa_pdf_url: target.url } : {}),
+      fetched_at: Date.now(),
+    });
+    navigate(`/paper/${encodeURIComponent(target.id)}`);
+  }, [navigate]);
 
   // Model selector: use cached models from settings, or fall back to text input
   const cachedModels = useSettings((s) =>
@@ -495,7 +520,7 @@ const MessageRow = memo(function MessageRow({
 }: {
   msg: ChatMessage;
   showPaperLinks: boolean;
-  onOpenPaper: (id: string) => void;
+  onOpenPaper: (paper: Paper) => void;
 }) {
   if (msg.role === "user") {
     return (
@@ -517,7 +542,7 @@ const MessageRow = memo(function MessageRow({
     return (
       <div className="msg msg-tool">
         {showPaperLinks &&
-          papers.map((p) => <PaperCard key={p.arxiv_id} paper={p} onClick={() => onOpenPaper(p.arxiv_id)} />)}
+          papers.map((p) => <PaperCard key={p.arxiv_id || p.doi || `p${papers.indexOf(p)}`} paper={p} onClick={() => onOpenPaper(p)} />)}
       </div>
     );
   }

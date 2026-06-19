@@ -23,11 +23,14 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
 interface Props {
   arxivId: string;
+  /** When set (non-arXiv OA papers), load the PDF from /api/pdf-url?url=…
+   *  instead of the arxiv-id path. */
+  pdfUrlOverride?: string;
   onLoaded?: (numPages: number) => void;
   onTextExtracted?: (text: string) => void;
 }
 
-export function PdfViewer({ arxivId, onLoaded, onTextExtracted }: Props) {
+export function PdfViewer({ arxivId, pdfUrlOverride, onLoaded, onTextExtracted }: Props) {
   const [doc, setDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState("");
@@ -36,7 +39,7 @@ export function PdfViewer({ arxivId, onLoaded, onTextExtracted }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
 
-  // Load document when arxivId changes.
+  // Load document when arxivId or pdfUrlOverride changes.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -44,7 +47,7 @@ export function PdfViewer({ arxivId, onLoaded, onTextExtracted }: Props) {
     setDoc(null);
     setNumPages(0);
     pdfjsLib
-      .getDocument({ url: pdfUrl(arxivId) })
+      .getDocument({ url: pdfUrlOverride || pdfUrl(arxivId) })
       .promise.then(async (d) => {
         if (cancelled) {
           d.destroy();
