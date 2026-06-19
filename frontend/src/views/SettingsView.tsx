@@ -24,6 +24,8 @@ export function SettingsView() {
   const setTheme = useSettings((s) => s.setTheme);
   const fetchAndCacheModels = useSettings((s) => s.fetchAndCacheModels);
   const getCachedModels = useSettings((s) => s.getCachedModels);
+  const searchSources = useSettings((s) => s.searchSources);
+  const setSearchSources = useSettings((s) => s.setSearchSources);
 
   const [draft, setDraft] = useState<Omit<Provider, "id">>(EMPTY);
   // Per-provider fetch state for the "Add provider" form
@@ -85,6 +87,89 @@ export function SettingsView() {
               </div>
             </button>
           ))}
+        </div>
+
+        <h2>Search sources</h2>
+        <p className="settings-hint">
+          arXiv is always on. Optionally enable OpenAlex and Semantic Scholar
+          for broader (published, peer-reviewed) literature. Both work without a
+          key (just rate-limited); an API key raises your limits. Keys are stored
+          only in your browser.
+        </p>
+        <div className="search-sources-list">
+          <div className="search-source-item">
+            <div className="search-source-row">
+              <strong>arXiv</strong>
+              <span className="badge">always on</span>
+            </div>
+            <div className="provider-detail">Preprints — the default source.</div>
+          </div>
+
+          <div className={`search-source-item ${searchSources.openalex.enabled ? "enabled" : ""}`}>
+            <div className="search-source-row">
+              <strong>OpenAlex</strong>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={searchSources.openalex.enabled}
+                  onChange={(e) => setSearchSources({ openalex: { ...searchSources.openalex, enabled: e.target.checked } })}
+                />
+                <span>{searchSources.openalex.enabled ? "on" : "off"}</span>
+              </label>
+            </div>
+            <div className="provider-detail">
+              API key (optional):{" "}
+              <input
+                className="search-source-key"
+                type="password"
+                placeholder="optional"
+                value={searchSources.openalex.apiKey}
+                onChange={(e) => setSearchSources({ openalex: { ...searchSources.openalex, apiKey: e.target.value } })}
+              />
+              {" · "}email (polite pool, optional):{" "}
+              <input
+                className="search-source-key"
+                type="text"
+                placeholder="optional"
+                value={searchSources.openalex.email}
+                onChange={(e) => setSearchSources({ openalex: { ...searchSources.openalex, email: e.target.value } })}
+              />
+            </div>
+            <div className="provider-detail">
+              Get a free key at{" "}
+              <a href="https://openalex.org/settings/api" target="_blank" rel="noopener noreferrer">openalex.org/settings/api</a>
+              {" "}($1/day free usage without one).
+            </div>
+          </div>
+
+          <div className={`search-source-item ${searchSources.semanticScholar.enabled ? "enabled" : ""}`}>
+            <div className="search-source-row">
+              <strong>Semantic Scholar</strong>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={searchSources.semanticScholar.enabled}
+                  onChange={(e) => setSearchSources({ semanticScholar: { ...searchSources.semanticScholar, enabled: e.target.checked } })}
+                />
+                <span>{searchSources.semanticScholar.enabled ? "on" : "off"}</span>
+              </label>
+            </div>
+            <div className="provider-detail">
+              API key (optional):{" "}
+              <input
+                className="search-source-key"
+                type="password"
+                placeholder="optional"
+                value={searchSources.semanticScholar.apiKey}
+                onChange={(e) => setSearchSources({ semanticScholar: { ...searchSources.semanticScholar, apiKey: e.target.value } })}
+              />
+            </div>
+            <div className="provider-detail">
+              Request a free key at{" "}
+              <a href="https://www.semanticscholar.org/product/api#api-key" target="_blank" rel="noopener noreferrer">semanticscholar.org/product/api</a>
+              {" "}(1 req/sec with a key; shared pool without).
+            </div>
+          </div>
         </div>
 
         <h2>Providers</h2>

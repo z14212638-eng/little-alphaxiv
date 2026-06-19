@@ -1007,3 +1007,11 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
   [data-theme="sepia"] .pdf-page-canvas-wrap::before,
   [data-theme="solarized-light"] .pdf-page-canvas-wrap::before { display: none; }
 }
+
+/* Settings: search sources */
+.search-sources-list { display: flex; flex-direction: column; gap: 10px; }
+.search-source-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.search-source-item.enabled { border-color: var(--accent, #4a90d9); }
+.search-source-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.search-source-item .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85em; opacity: 0.8; }
+.search-source-key { font-size: 0.9em; padding: 2px 6px; }
