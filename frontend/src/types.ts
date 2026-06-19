@@ -44,6 +44,7 @@ export interface ChatMessage {
     papers?: Paper[]; // papers surfaced from a search_arxiv tool result
     pending?: boolean; // assistant message still streaming
     error?: string;
+    stopped?: boolean; // user clicked Stop mid-reply; partial content kept, "已停止" marker
   };
 }
 
