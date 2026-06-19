@@ -83,6 +83,8 @@ export function ModelSelectPill({ models, value, onChange, disabled }: Props) {
         type="button"
         className="model-pill-btn"
         title="Select model for this conversation"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onKey}
         disabled={disabled}
