@@ -1086,3 +1086,45 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
   [data-theme="sepia"] .pdf-page-canvas-wrap::before,
   [data-theme="solarized-light"] .pdf-page-canvas-wrap::before { display: none; }
 }
+
+/* Loopback-Origin recovery banner (origin-mismatch warning). */
+.origin-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.origin-banner-text { flex: 1; min-width: 0; }
+.origin-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.origin-banner-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.origin-banner-link:hover { text-decoration: underline; }
+.origin-banner-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.origin-banner-dismiss:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
