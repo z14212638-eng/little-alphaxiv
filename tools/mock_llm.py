@@ -54,6 +54,21 @@ def _is_paper_title_request(messages: list) -> bool:
     return False
 
 
+def _requested_source(messages: list) -> str:
+    """If the user's query mentions a specific source, the mock emits that
+    source's tool call so the E2E driver can exercise each path deterministically
+    (the real model picks; the mock is fixed). Returns 'search_arxiv' by default."""
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str):
+            low = c.lower()
+            if "openalex" in low:
+                return "search_openalex"
+            if "semantic" in low or " s2" in low:
+                return "search_semantic_scholar"
+    return "search_arxiv"
+
+
 _MOCK_TITLE_GENERAL = "Vision transformer paper search"
 _MOCK_TITLE_PAPER = "Attention mechanism in transformers"
 
@@ -136,8 +151,9 @@ async def completions(request: Request):
         return StreamingResponse(gen_title(), media_type="text/event-stream")
 
     if not _has_tool_result(messages):
-        # Turn 1: emit a search_arxiv tool call.
+        # Turn 1: emit a paper-search tool call (source chosen by query content).
         tool_call_id = "call_mock_1"
+        tool_name = _requested_source(messages)
         if not stream:
             return JSONResponse(
                 {
@@ -155,7 +171,7 @@ async def completions(request: Request):
                                         "id": tool_call_id,
                                         "type": "function",
                                         "function": {
-                                            "name": "search_arxiv",
+                                            "name": tool_name,
                                             "arguments": json.dumps(
                                                 {"query": "vision transformer", "max_results": 5}
                                             ),
@@ -184,7 +200,7 @@ async def completions(request: Request):
                                         "index": 0,
                                         "id": tool_call_id,
                                         "type": "function",
-                                        "function": {"name": "search_arxiv", "arguments": ""},
+                                        "function": {"name": tool_name, "arguments": ""},
                                     }
                                 ],
                             },
