@@ -35,7 +35,14 @@ interface ConvState {
     patch: Partial<ChatMessage>
   ) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
-  updateSettings: (id: string, patch: { model?: string; style_preset?: import("../types").StylePreset; context_window?: number }) => Promise<void>;
+  updateSettings: (id: string, patch: {
+    model?: string;
+    style_preset?: import("../types").StylePreset;
+    context_window?: number; // deprecated, kept for back-compat
+    context_capacity_override?: number; // 0/undefined = Auto
+    reserve_tokens?: number; // 0/undefined = auto default
+    last_usage?: import("../types").TokenUsage & { calibration: number; ts: number };
+  }) => Promise<void>;
   remove: (id: string) => Promise<void>;
   removeMany: (ids: string[]) => Promise<void>;
   getActive: () => Conversation | undefined;
@@ -51,6 +58,26 @@ async function persist(conv: Conversation): Promise<void> {
   if (conv.messages.length > 0) {
     await db.saveConversation(conv);
   }
+}
+
+// Per-conversation write serialization. The store's mutations are called
+// fire-and-forget from the chat loop (onAssistantMessage/onToolMessage append
+// messages while onUsage writes last_usage, all in the same turn). Without
+// serialization, each mutation reads an in-memory snapshot, persists it, then
+// sets state — and concurrent persists race: the last IDB write wins, losing
+// fields the other mutation added (notably last_usage, which loses to the
+// round-2 answer's appendMessages). Serializing per-conversation means each
+// mutation waits for the previous to finish (including its `set`), so the next
+// reads a fresh in-memory snapshot and no update is lost.
+const _convLocks: Record<string, Promise<void>> = {};
+function withConvLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = _convLocks[id] ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  _convLocks[id] = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
 }
 
 export const useConversations = create<ConvState>((set, get) => ({
@@ -108,64 +135,73 @@ export const useConversations = create<ConvState>((set, get) => ({
     return conv;
   },
 
-  appendMessages: async (id, msgs) => {
-    const conv = get().conversations.find((c) => c.id === id);
-    if (!conv) return;
-    const updated: Conversation = {
-      ...conv,
-      messages: [...conv.messages, ...msgs],
-      updated_at: Date.now(),
-    };
-    await persist(updated); // first message persists a previously-empty conv
-    set((s) => ({
-      conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-    }));
-  },
+  appendMessages: async (id, msgs) =>
+    withConvLock(id, async () => {
+      const conv = get().conversations.find((c) => c.id === id);
+      if (!conv) return;
+      const updated: Conversation = {
+        ...conv,
+        messages: [...conv.messages, ...msgs],
+        updated_at: Date.now(),
+      };
+      await persist(updated); // first message persists a previously-empty conv
+      set((s) => ({
+        conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+      }));
+    }),
 
-  updateMessage: async (id, index, patch) => {
-    const conv = get().conversations.find((c) => c.id === id);
-    if (!conv) return;
-    const messages = conv.messages.map((m, i) =>
-      i === index ? { ...m, ...patch } : m
-    );
-    const updated: Conversation = {
-      ...conv,
-      messages,
-      updated_at: Date.now(),
-    };
-    await persist(updated);
-    set((s) => ({
-      conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-    }));
-  },
+  updateMessage: async (id, index, patch) =>
+    withConvLock(id, async () => {
+      const conv = get().conversations.find((c) => c.id === id);
+      if (!conv) return;
+      const messages = conv.messages.map((m, i) =>
+        i === index ? { ...m, ...patch } : m
+      );
+      const updated: Conversation = {
+        ...conv,
+        messages,
+        updated_at: Date.now(),
+      };
+      await persist(updated);
+      set((s) => ({
+        conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+      }));
+    }),
 
-  rename: async (id, title) => {
-    const conv = get().conversations.find((c) => c.id === id);
-    if (!conv) return;
-    const updated = { ...conv, title, updated_at: Date.now() };
-    await persist(updated);
-    set((s) => ({
-      conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-    }));
-  },
+  rename: async (id, title) =>
+    withConvLock(id, async () => {
+      const conv = get().conversations.find((c) => c.id === id);
+      if (!conv) return;
+      const updated = { ...conv, title, updated_at: Date.now() };
+      await persist(updated);
+      set((s) => ({
+        conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+      }));
+    }),
 
-  updateSettings: async (id, patch) => {
-    const conv = get().conversations.find((c) => c.id === id);
-    if (!conv) return;
-    const updated = {
-      ...conv,
-      ...(patch.model !== undefined ? { model: patch.model } : {}),
-      ...(patch.style_preset !== undefined ? { style_preset: patch.style_preset } : {}),
-      ...(patch.context_window !== undefined ? { context_window: patch.context_window } : {}),
-      updated_at: Date.now(),
-    };
-    // If the conv is still empty, settings live in memory only and will be
-    // persisted together with the first message.
-    await persist(updated);
-    set((s) => ({
-      conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-    }));
-  },
+  updateSettings: async (id, patch) =>
+    withConvLock(id, async () => {
+      const conv = get().conversations.find((c) => c.id === id);
+      if (!conv) return;
+      const updated = {
+        ...conv,
+        ...(patch.model !== undefined ? { model: patch.model } : {}),
+        ...(patch.style_preset !== undefined ? { style_preset: patch.style_preset } : {}),
+        ...(patch.context_window !== undefined ? { context_window: patch.context_window } : {}),
+        ...(patch.context_capacity_override !== undefined
+          ? { context_capacity_override: patch.context_capacity_override }
+          : {}),
+        ...(patch.reserve_tokens !== undefined ? { reserve_tokens: patch.reserve_tokens } : {}),
+        ...(patch.last_usage !== undefined ? { last_usage: patch.last_usage } : {}),
+        updated_at: Date.now(),
+      };
+      // If the conv is still empty, settings live in memory only and will be
+      // persisted together with the first message.
+      await persist(updated);
+      set((s) => ({
+        conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+      }));
+    }),
 
   remove: async (id) => {
     await db.deleteConversation(id); // no-op if it was never persisted
