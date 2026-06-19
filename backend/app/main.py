@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routers import llm, search, pdf, websearch, models
+from .routers import llm, search, pdf, websearch, models, semantic_scholar
 
 app = FastAPI(title="Little Alphaxiv Proxy", version="0.1.0")
 
@@ -36,6 +36,7 @@ app.include_router(search.router, prefix="/api")
 app.include_router(pdf.router, prefix="/api")
 app.include_router(websearch.router, prefix="/api")
 app.include_router(models.router, prefix="/api")
+app.include_router(semantic_scholar.router, prefix="/api")
 
 
 @app.get("/api/health")
