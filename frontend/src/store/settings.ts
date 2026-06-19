@@ -11,6 +11,19 @@ import { coerceTheme, DEFAULT_THEME } from "../themes";
  *  can grow without churn; validity is enforced at runtime via coerceTheme. */
 export type Theme = string;
 
+/** Optional academic search sources beyond the always-on arXiv. Keys live in
+ *  the browser (localStorage) alongside provider keys; both sources also work
+ *  without a key (just rate-limited), so the key is an optional enhancement. */
+export interface SearchSources {
+  openalex: { enabled: boolean; apiKey: string; email: string };
+  semanticScholar: { enabled: boolean; apiKey: string };
+}
+
+export const DEFAULT_SEARCH_SOURCES: SearchSources = {
+  openalex: { enabled: false, apiKey: "", email: "" },
+  semanticScholar: { enabled: false, apiKey: "" },
+};
+
 interface SettingsState {
   providers: Provider[];
   defaultProviderId: string | null;
@@ -29,6 +42,12 @@ interface SettingsState {
   getCachedModels: (providerId: string) => ModelInfo[];
   /** Clear cached models for a provider (e.g. after changing base_url/key). */
   clearCachedModels: (providerId: string) => void;
+  /** Optional academic search sources (OpenAlex / Semantic Scholar). Components
+   *  select the stable `searchSources` object and derive booleans locally
+   *  (not via a derived selector, which would re-render every state change). */
+  searchSources: SearchSources;
+  /** Patch the search-sources slice (shallow-merged per source). */
+  setSearchSources: (patch: Partial<SearchSources>) => void;
 }
 
 function uid(): string {
@@ -43,6 +62,7 @@ export const useSettings = create<SettingsState>()(
       providers: [],
       defaultProviderId: null,
       theme: DEFAULT_THEME,
+      searchSources: DEFAULT_SEARCH_SOURCES,
       providerModels: {},
       addProvider: (p) => {
         const provider: Provider = { ...p, id: uid() };
@@ -104,6 +124,16 @@ export const useSettings = create<SettingsState>()(
         set((s) => ({
           providerModels: { ...s.providerModels, [providerId]: [] },
         })),
+      setSearchSources: (patch) =>
+        set((s) => ({
+          searchSources: {
+            openalex: { ...s.searchSources.openalex, ...(patch.openalex ?? {}) },
+            semanticScholar: {
+              ...s.searchSources.semanticScholar,
+              ...(patch.semanticScholar ?? {}),
+            },
+          },
+        })),
     }),
     {
       name: "little-alphaxiv-settings",
@@ -111,7 +141,11 @@ export const useSettings = create<SettingsState>()(
       // a valid one on rehydration. Old "dark"/"light" values are already
       // valid ids and pass through unchanged.
       onRehydrateStorage: () => (state) => {
-        if (state) state.theme = coerceTheme(state.theme);
+        if (state) {
+          state.theme = coerceTheme(state.theme);
+          // Older persisted state (pre multi-source) has no searchSources.
+          if (!state.searchSources) state.searchSources = DEFAULT_SEARCH_SOURCES;
+        }
       },
     }
   )

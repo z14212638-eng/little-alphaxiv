@@ -66,6 +66,14 @@ export interface Paper {
   abs_url: string;
   published: string;
   primary_category: string;
+  /** Which search source surfaced this paper. arXiv results omit it (legacy). */
+  source?: "arxiv" | "openalex" | "s2";
+  /** DOI (lowercased, no URL wrapper) when the source provides one. */
+  doi?: string;
+  /** Direct open-access PDF URL for non-arXiv papers, when available. */
+  oa_pdf_url?: string;
+  /** Landing page (DOI/S2/OpenAlex) for papers with no in-app-previewable PDF. */
+  external_url?: string;
 }
 
 export type ConversationType = "general" | "paper";
