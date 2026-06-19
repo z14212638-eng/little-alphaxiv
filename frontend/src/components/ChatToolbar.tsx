@@ -1,6 +1,6 @@
 // Chat toolbar — top bar of the chat panel in paper view.
 // Left: history toggle (opens the HistoryPanel) + current thread title.
-// Right: new-conversation button + settings dropdown (model / style /
+// Right: new-conversation button + settings dropdown (style /
 // theme). The history is a full panel (see HistoryPanel), not a
 // dropdown — the dropdown was too crude to tell threads apart.
 
