@@ -23,7 +23,7 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
     s.annots.filter((a) => a.page === pageNumber && a.type === "highlight")
   );
   const [bubble, setBubble] = useState<BubblePos | null>(null);
-  const pendingRectsRef = useRef<{ left: number; top: number; width: number; height: number }[] | null>(null);
+  const pendingRef = useRef<{ rects: { left: number; top: number; width: number; height: number }[]; text: string } | null>(null);
 
   // On mouseup anywhere, if highlightOn and selection is within this page, show bubble.
   useEffect(() => {
@@ -34,7 +34,7 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setBubble(null);
-        pendingRectsRef.current = null;
+        pendingRef.current = null;
         return;
       }
       const range = sel.getRangeAt(0);
@@ -56,7 +56,10 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
         };
       });
       if (clientRects.length === 0) return;
-      pendingRectsRef.current = clientRects;
+      // Capture the selected text now (the bubble's onMouseDown preventDefault
+      // keeps the selection alive until a color is picked) so highlights carry
+      // their content for the "Create Note from Annotations" sync.
+      pendingRef.current = { rects: clientRects, text: sel.toString().trim() };
       // place bubble above the first rect
       setBubble({ x: clientRects[0].left, y: clientRects[0].top - 32 });
     }
@@ -65,11 +68,17 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
   }, [highlightOn]);
 
   function pickColor(c: string) {
-    if (!pendingRectsRef.current) return;
-    const rects = rectsToNorm(pendingRectsRef.current, pageSize);
+    const p = pendingRef.current;
+    if (!p) return;
+    const rects = rectsToNorm(p.rects, pageSize);
     if (rects.length === 0) return;
-    addAnnot({ type: "highlight", page: pageNumber, highlight: { rects }, color: c });
-    pendingRectsRef.current = null;
+    addAnnot({
+      type: "highlight",
+      page: pageNumber,
+      highlight: { rects, ...(p.text ? { content: p.text } : {}) },
+      color: c,
+    });
+    pendingRef.current = null;
     setBubble(null);
     window.getSelection()?.removeAllRanges();
   }
