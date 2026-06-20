@@ -2,6 +2,7 @@
 // When highlightOn, a text selection inside this page shows a color bubble;
 // picking a color creates a highlight annotation from the selection's client rects.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAnnotations } from "../store/annotations";
 import { rectsToNorm, denormalizeRect } from "../lib/annotations";
 import { PALETTE } from "../lib/annotations";
@@ -24,6 +25,21 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
   );
   const [bubble, setBubble] = useState<BubblePos | null>(null);
   const pendingRectsRef = useRef<{ left: number; top: number; width: number; height: number }[] | null>(null);
+
+  // The color bubble must be CLICKABLE. It cannot live inside this .highlight-layer:
+  // .highlight-layer is z-index 1 (a stacking context), so any child — even one
+  // styled z-index: 5 — paints BELOW .pdf-textlayer (z-index 2, pointer-events:
+  // auto, covers the whole page). The bubble would be visible (the textlayer is
+  // transparent) but pointer-blocked: clicks on the swatches hit the textlayer
+  // instead, pickColor never runs, and the highlight is never applied. That was
+  // the bug. Fix: portal the bubble up to .pdf-page-canvas-wrap (this layer's
+  // parent), where z-index 5 puts it ABOVE the textlayer and annot-layer and the
+  // swatches receive their mousedown. The page-relative bubble coords still work
+  // because .pdf-page-canvas-wrap (position: relative) is the same offset parent.
+  const [bubbleHost, setBubbleHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setBubbleHost(wrapRef.current?.parentElement ?? null);
+  }, []);
 
   // On mouseup anywhere, if highlightOn and selection is within this page, show bubble.
   useEffect(() => {
@@ -95,7 +111,7 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
           );
         })
       )}
-      {bubble && (
+      {bubble && bubbleHost && createPortal(
         <div className="highlight-bubble" style={{ left: bubble.x, top: bubble.y }}>
           {PALETTE.map((c) => (
             <button
@@ -105,7 +121,8 @@ export function HighlightLayer({ pageNumber, pageSize }: Props) {
               onMouseDown={(e) => { e.preventDefault(); pickColor(c); }}
             />
           ))}
-        </div>
+        </div>,
+        bubbleHost
       )}
     </div>
   );
