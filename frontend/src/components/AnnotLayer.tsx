@@ -4,7 +4,7 @@
 //   tool==="draw"  -> drag to draw freehand
 //   tool==="text"  -> click to place an editable text box
 // After commit the tool resets to "none" (one-shot).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAnnotations } from "../store/annotations";
 import {
   denormalizeRect, denormalizePoint, normalizePoint, normalizeRect,
@@ -67,6 +67,19 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
       (e.target as Element).setPointerCapture(e.pointerId);
       setDraftPoints([toLayerPx(e)]);
     } else if (tool === "text") {
+      // A text box is already being edited: ignore further clicks on the layer
+      // so the in-progress input can blur+commit. (Clicks landing on the input
+      // itself are stopped there.) Without this guard a blank click would
+      // reset/move the box instead of committing it — the "two clicks to type"
+      // symptom.
+      if (textBox) return;
+      // Suppress the compatibility mouse events (mousedown/mouseup/click) for
+      // this placement press. Otherwise the synthesized click lands on the
+      // non-focusable annot-layer and the browser moves focus to <body>,
+      // immediately blurring the input we are about to mount+focus — which
+      // commits empty and discards the box. (Pointer Events spec: canceling
+      // pointerdown forbids the compat mouse events for that pointer.)
+      e.preventDefault();
       const p = toLayerPx(e);
       setTextBox({ x: p.x, y: p.y });
     }
@@ -295,7 +308,7 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
       {/* text input box */}
       {textBox && (
         <TextInputBox
-          x={textBox.x} y={textBox.y} color={color}
+          x={textBox.x} y={textBox.y} color={color} pageSize={pageSize}
           onCommit={(content, boxPx) => commitText(content, boxPx)}
           onCancel={() => { setTextBox(null); setTool("none"); }}
         />
@@ -305,40 +318,77 @@ export function AnnotLayer({ pageNumber, pageSize }: Props) {
 }
 
 function TextInputBox({
-  x, y, color, onCommit, onCancel,
+  x, y, color, pageSize, onCommit, onCancel,
 }: {
-  x: number; y: number; color: string;
+  x: number; y: number; color: string; pageSize: PageSize;
   onCommit: (content: string, boxPx: { x: number; y: number; w: number; h: number }) => void;
   onCancel: () => void;
 }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   const committedRef = useRef(false);
-  const [val, setVal] = useState("");
-  // focus on mount
-  if (ref.current && document.activeElement !== ref.current) {
-    setTimeout(() => ref.current?.focus(), 0);
-  }
+  // Font size matches the committed annotation (norm fontSize * page width) so
+  // what you type is exactly what gets placed — the box measured at commit then
+  // equals the rendered annotation size, and the hit-area hugs the text.
+  const fontSize = 0.0175 * pageSize.w;
+
+  // Focus on mount. The old code did this during render, where ref.current is
+  // null on the first render, so focus never fired and the user had to click a
+  // second time to start typing.
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
   function finish() {
     if (committedRef.current) return;
     committedRef.current = true;
     const el = ref.current;
-    const w = el?.offsetWidth ?? 120;
-    const h = el?.offsetHeight ?? 24;
-    onCommit(val, { x, y, w, h });
+    if (!el) {
+      onCommit("", { x, y, w: 0, h: 0 });
+      return;
+    }
+    // Normalize NBSP (contentEditable sometimes inserts them) and trim, then
+    // re-render the trimmed text into the element before measuring so the box
+    // hugs the actual placed content rather than trailing whitespace.
+    const trimmed = el.innerText.replace(/ /g, " ").trim();
+    el.innerText = trimmed;
+    // clientWidth/Height = content + padding, excluding the input's 1px border,
+    // which exactly matches the committed .annot-text border-box (no border).
+    onCommit(trimmed, { x, y, w: el.clientWidth, h: el.clientHeight });
   }
+
   return (
-    <textarea
+    <div
       ref={ref}
       className="annot-text-input"
-      value={val}
-      style={{ left: x, top: y, color }}
-      onChange={(e) => setVal(e.target.value)}
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      aria-multiline="true"
+      tabIndex={0}
+      style={{ left: x, top: y, color, fontSize, maxWidth: pageSize.w }}
+      // Stop propagation so the annot-layer's pointerdown doesn't reset the
+      // box while editing (clicking inside to place the caret).
+      onPointerDown={(e) => e.stopPropagation()}
       onBlur={finish}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(); }
-        if (e.key === "Escape") { e.preventDefault(); committedRef.current = true; onCancel(); }
+      onPaste={(e) => {
+        // Plain-text only: never let rich markup into an annotation.
+        e.preventDefault();
+        const text = e.clipboardData.getData("text/plain");
+        document.execCommand("insertText", false, text);
       }}
-      rows={1}
+      onKeyDown={(e) => {
+        // Don't hijack IME composition — Enter confirms the IME candidate, not
+        // the box. Critical for CJK input.
+        if (e.nativeEvent.isComposing) return;
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          finish();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          committedRef.current = true;
+          onCancel();
+        }
+      }}
     />
   );
 }

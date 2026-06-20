@@ -962,14 +962,25 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
   position: absolute; padding: 2px 4px; line-height: 1.3;
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   white-space: pre-wrap; word-break: break-word;
+  /* Annotation text is a decorative overlay, NOT selectable PDF text: keep
+     drag-selection inside the text layer. Without this, dragging across a text
+     box sweeps its content into the selection and produces a full-page
+     highlight artifact. The editing input (.annot-text-input) re-enables
+     user-select:text so you can still type/edit. */
+  -webkit-user-select: none; user-select: none;
 }
 .annot-text.selected { outline: 1px dashed var(--accent); }
 .annot-text-input {
-  position: absolute; min-width: 80px; min-height: 24px;
-  padding: 2px 4px; background: var(--bg-3); color: var(--text);
-  border: 1px solid var(--accent); border-radius: 3px;
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px;
-  resize: both; outline: none;
+  position: absolute; display: inline-block;
+  /* metrics mirror .annot-text so the box measured at commit == the placed
+     annotation (font-size is set inline to match the normalized fontSize). */
+  padding: 2px 4px; line-height: 1.3;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  white-space: pre-wrap; word-break: break-word;
+  min-width: 2ch; min-height: 1.5em; overflow: hidden;
+  background: var(--bg-3); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 3px; outline: none;
+  -webkit-user-select: text; user-select: text;
   /* themed surface (not white) so light annotation colours like yellow stay
      legible while typing; matches .annot-palette / .annot-tool-btn. */
   box-shadow: 0 1px 4px rgba(0,0,0,0.3);

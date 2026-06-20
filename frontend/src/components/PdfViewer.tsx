@@ -130,8 +130,28 @@ export function PdfViewer({ arxivId, pdfUrlOverride, onLoaded, onTextExtracted }
         if (s.tool !== "none") { s.setTool("none"); }
       }
     }
+
+    // Click-to-deselect: in default mode, clicking blank PDF area clears the
+    // current annotation selection. Annotation elements (text box, rect/draw
+    // strokes, handles, highlight targets) all call stopPropagation on their
+    // own pointerdown, so they never reach this document listener — only blank
+    // clicks do. Scoped to .pdf-scroll so toolbar/chat clicks keep the
+    // selection. (React 18 root-listener + stopPropagation shields this.)
+    function onPointerDown(e: PointerEvent) {
+      const s = useAnnotations.getState();
+      if (s.tool !== "none" || !s.selectedId) return;
+      const target = e.target as Element | null;
+      if (target && target.closest(".pdf-scroll")) {
+        s.select(null);
+      }
+    }
+
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
   }, []);
 
   return (
