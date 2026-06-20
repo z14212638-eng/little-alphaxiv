@@ -4,9 +4,11 @@
 //     arXiv id, falling back to title). If found, open it in Zotero via the
 //     zotero://select deep link; if not, add it (metadata + optional PDF).
 //   - "Library": search the library; open any item in Zotero.
-//   - "Collections": list collections; in Web mode, create a collection or add
-//     the current paper to one (organize). Local mode is read-only for
-//     collections by Zotero's API design — the panel says so.
+//   - "Collections": list collections; click a collection to expand it and see
+//     the papers inside (works in both local and web mode — reading items is
+//     allowed on the read-only local API). In Web mode, also create a
+//     collection or add the current paper to one (organize). Local mode can't
+//     organize — the panel says so.
 //
 // All Zotero calls go through /api/zotero/* (backend proxy → local 23119 or
 // web api.zotero.org). Credentials come from the settings store.
@@ -18,6 +20,7 @@ import {
   zoteroStatus,
   zoteroSearchItems,
   zoteroListCollections,
+  zoteroListCollectionItems,
   zoteroSaveArxiv,
   zoteroCreateCollection,
   zoteroAddToCollection,
@@ -64,6 +67,14 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
   const [selectedColl, setSelectedColl] = useState("");
   const [newCollName, setNewCollName] = useState("");
   const [collBusy, setCollBusy] = useState(false);
+  // Expand-a-collection-to-see-its-items state. One collection expanded at a
+  // time; items are lazy-loaded on first expand and cached so toggling back and
+  // forth doesn't re-hit Zotero. collFilter narrows the expanded list by title.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [collItems, setCollItems] = useState<Record<string, ZoteroItem[]>>({});
+  const [collLoading, setCollLoading] = useState<string | null>(null);
+  const [collFilter, setCollFilter] = useState("");
+  const [collError, setCollError] = useState<string | null>(null);
 
   const creds = useMemo(() => ({ mode: zotero.mode, userId: zotero.userId, apiKey: zotero.apiKey }), [zotero]);
   const connected = !!status?.ok;
@@ -192,6 +203,32 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
     }
   }
 
+  // Expand/collapse a collection row. On first expand, fetch the collection's
+  // items (the backend /api/zotero/items endpoint already routes
+  // collection_key -> /users/<seg>/collections/<key>/items) and cache them so
+  // toggling back and forth doesn't re-hit Zotero. Works in both local and web
+  // mode since reading items is allowed on the local read-only API.
+  async function toggleCollection(key: string) {
+    if (expandedKey === key) {
+      setExpandedKey(null);
+      setCollFilter("");
+      return;
+    }
+    setExpandedKey(key);
+    setCollFilter("");
+    setCollError(null);
+    if (collItems[key]) return;
+    setCollLoading(key);
+    try {
+      const r = await zoteroListCollectionItems(creds, key, 100);
+      setCollItems((prev) => ({ ...prev, [key]: r.results }));
+    } catch (e) {
+      setCollError(String((e as Error).message || e));
+    } finally {
+      setCollLoading(null);
+    }
+  }
+
   useEffect(() => {
     if (connected && tab === "collections" && collections.length === 0) void loadCollections();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,8 +258,13 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
     setMsg(null);
     try {
       const res = await zoteroAddToCollection(creds, currentKey, [selectedColl]);
-      if (res.ok) setMsg({ kind: "ok", text: "Added to collection" });
-      else setMsg({ kind: "err", text: "Add to collection failed" });
+      if (res.ok) {
+        // Item counts changed — drop the per-collection item cache so the next
+        // expand refetches, and refresh the collection list for numItems.
+        setCollItems({});
+        await loadCollections();
+        setMsg({ kind: "ok", text: "Added to collection" });
+      } else setMsg({ kind: "err", text: "Add to collection failed" });
     } catch (e) {
       setMsg({ kind: "err", text: `${String((e as Error).message || e)}` });
     } finally {
@@ -342,7 +384,8 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
                 <div className="zotero-hint">
                   Organizing collections (create / add to) requires <strong>Web API</strong> mode —
                   the local Zotero API is read-only by design.{" "}
-                  <a href="#/settings">Switch in Settings</a>. Below are your existing collections (read-only):
+                  <a href="#/settings">Switch in Settings</a>. You can still browse your collections
+                  and the papers inside each one (read-only):
                 </div>
               ) : (
                 <div className="zotero-coll-actions">
@@ -364,12 +407,62 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
               )}
               {collections.length > 0 ? (
                 <div className="zotero-list">
-                  {collections.map((c) => (
-                    <div key={c.key} className="zotero-coll-item">
-                      <span>{c.parentKey ? "↳ " : "📁 "}{c.name}</span>
-                      <span className="zotero-coll-count">{c.numItems}</span>
-                    </div>
-                  ))}
+                  {collections.map((c) => {
+                    const open = expandedKey === c.key;
+                    // Notes/attachments slip into the collection-items endpoint;
+                    // hide them so the list shows real papers only.
+                    const raw = (collItems[c.key] || []).filter(
+                      (it) => it.itemType !== "note" && it.itemType !== "attachment"
+                    );
+                    const q = collFilter.trim().toLowerCase();
+                    const shown = q ? raw.filter((it) => it.title.toLowerCase().includes(q)) : raw;
+                    return (
+                      <div key={c.key} className="zotero-coll-wrap">
+                        <button
+                          className={`zotero-coll-item ${open ? "open" : ""}`}
+                          onClick={() => void toggleCollection(c.key)}
+                          aria-expanded={open}
+                        >
+                          <span className="zotero-coll-caret">{open ? "▼" : "▶"}</span>
+                          <span className="zotero-coll-name">{c.parentKey ? "↳ " : "📁 "}{c.name}</span>
+                          <span className="zotero-coll-count">{c.numItems}</span>
+                        </button>
+                        {open && (
+                          <div className="zotero-coll-items">
+                            {collLoading === c.key ? (
+                              <div className="zotero-hint">Loading items…</div>
+                            ) : collError ? (
+                              <div className="zotero-hint">Failed to load: {collError}</div>
+                            ) : raw.length === 0 ? (
+                              <div className="zotero-hint">No items in this collection.</div>
+                            ) : (
+                              <>
+                                <input
+                                  className="zotero-coll-filter"
+                                  placeholder={`Filter ${raw.length} item${raw.length === 1 ? "" : "s"} by title…`}
+                                  value={collFilter}
+                                  onChange={(e) => setCollFilter(e.target.value)}
+                                />
+                                {shown.map((it) => (
+                                  <div key={it.key} className="zotero-item zotero-coll-entry">
+                                    <div className="zotero-item-main">
+                                      <span className="zotero-item-title">
+                                        {it.title}
+                                        {it.arxivId && <span className="zotero-arxiv-badge" title={`arXiv:${it.arxivId}`}>arXiv</span>}
+                                      </span>
+                                      {it.creators && <span className="zotero-item-sub">{it.creators}{it.year ? ` (${it.year})` : ""}</span>}
+                                    </div>
+                                    <a className="zotero-open-btn" href={zoteroSelectUrl(it.key)} target="_blank" rel="noopener noreferrer">Open</a>
+                                  </div>
+                                ))}
+                                {shown.length === 0 && <div className="zotero-hint">No matches.</div>}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 connected && <div className="zotero-hint">No collections.</div>

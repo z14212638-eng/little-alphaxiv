@@ -402,6 +402,20 @@ export async function zoteroListCollections(c: ZoteroCreds): Promise<{ results: 
   return zoteroGet("collections", c);
 }
 
+/** List the items directly inside a single collection — used when the user
+ *  expands a collection row in the Collections tab to see the papers it holds.
+ *  The backend /api/zotero/items endpoint already accepts a collection_key
+ *  query param and routes it to /users/<seg>/collections/<key>/items, so this
+ *  is a read in BOTH local and web mode (the local API is read-only but reads
+ *  are allowed). Empty `q` lists every item in the collection. */
+export async function zoteroListCollectionItems(
+  c: ZoteroCreds,
+  collectionKey: string,
+  limit = 100
+): Promise<{ total: number; results: ZoteroItem[]; mode: string }> {
+  return zoteroGet("items", c, { collection_key: collectionKey, limit: String(limit) });
+}
+
 /** Create a Zotero collection (web mode only). */
 export async function zoteroCreateCollection(
   c: ZoteroCreds,
