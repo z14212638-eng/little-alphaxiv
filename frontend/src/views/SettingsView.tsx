@@ -7,6 +7,7 @@ import { useLocation } from "react-router-dom";
 import { useSettings } from "../store/settings";
 import { THEMES } from "../themes";
 import type { Provider, ModelInfo } from "../types";
+import * as api from "../lib/api";
 
 const EMPTY: Omit<Provider, "id"> = {
   name: "",
@@ -32,6 +33,38 @@ export function SettingsView() {
   const [zoteroTesting, setZoteroTesting] = useState(false);
   const [zoteroTestResult, setZoteroTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const location = useLocation();
+
+  // Account (recovery email). Hydrated from /api/auth/me; the email is the
+  // only thing a user can edit here (username is read-only). For pre-migration
+  // accounts (no email on file) this is how they enable password recovery.
+  const [accountName, setAccountName] = useState("");
+  const [emailDraft, setEmailDraft] = useState("");
+  const [emailSaved, setEmailSaved] = useState<string | null>(null);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  useEffect(() => {
+    api.getMe().then((me) => {
+      if (!me) return;
+      setAccountName(me.username);
+      setEmailDraft(me.email ?? "");
+      setEmailSaved(me.email ?? "");
+    });
+  }, []);
+
+  async function saveEmail() {
+    setEmailBusy(true);
+    setEmailMsg(null);
+    try {
+      const r = await api.setAccountEmail(emailDraft.trim() || null);
+      setEmailSaved(r.email ?? "");
+      setEmailDraft(r.email ?? "");
+      setEmailMsg("Saved.");
+    } catch (e) {
+      setEmailMsg((e as Error).message);
+    } finally {
+      setEmailBusy(false);
+    }
+  }
 
   // Auto-scroll to a settings section when arriving via /settings#<id> (e.g.
   // "#providers" from the sidebar's "No provider" warning, or "#zotero" from
@@ -104,6 +137,32 @@ export function SettingsView() {
   return (
     <main className="main-pane">
       <div className="settings-shell">
+        <h2 id="account">Account</h2>
+        <p className="settings-hint">
+          Your username is read-only. The email is used only for password
+          recovery — add one so a forgotten password doesn't lock you out.
+        </p>
+        <div className="login-field">
+          <span>Username</span>
+          <input type="text" value={accountName} readOnly disabled />
+        </div>
+        <div className="login-field">
+          <span>Email (for password recovery)</span>
+          <input
+            type="email"
+            value={emailDraft}
+            onChange={(e) => setEmailDraft(e.target.value)}
+            disabled={emailBusy}
+          />
+        </div>
+        {emailMsg && <div className="login-error">{emailMsg}</div>}
+        <button className="login-submit" onClick={saveEmail} disabled={emailBusy || emailDraft.trim() === (emailSaved ?? "").trim()}>
+          {emailBusy ? "…" : "Save email"}
+        </button>
+        {!emailSaved && (
+          <p className="settings-hint">No email on file — add one to enable password recovery.</p>
+        )}
+
         <h2>Appearance</h2>
         <p className="settings-hint">Choose an interface theme. Each is a complete palette — the PDF viewer, code blocks, and scrollbars all follow it.</p>
         <div className="theme-grid">
