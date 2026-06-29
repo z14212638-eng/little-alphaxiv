@@ -39,6 +39,9 @@ class User(SQLModel, table=True):
     # username stored lowercased+trimmed on insert; unique index for fast lookup
     username: str = Field(unique=True, index=True)
     password_hash: str  # bcrypt
+    # Email for password recovery. Nullable so pre-migration accounts survive;
+    # unique so email→account is unambiguous (SQLite allows multiple NULLs).
+    email: str | None = Field(default=None, unique=True, index=True)
     created_at: int = Field(default_factory=_now)
 
 
@@ -185,3 +188,21 @@ class ZoteroNoteSyncRow(SQLModel, table=True):
     last_error: str | None = None
     last_count: int = 0
     content_sig: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Password reset tokens (hashed, single-use, TTL-bounded)
+# ---------------------------------------------------------------------------
+
+
+class PasswordResetRow(SQLModel, table=True):
+    """A single-use password-reset token. Only sha256(token) is stored — the
+    plaintext token exists only in the reset link sent to the user. A new
+    request supersedes the user's prior unused tokens (marked used_at)."""
+    __tablename__ = "password_reset"
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    token_hash: str = Field(unique=True, index=True)  # sha256(token).hexdigest()
+    expires_at: int  # epoch seconds
+    used_at: int | None = None  # set when consumed → single-use
+    created_at: int = Field(default_factory=_now)
