@@ -1,0 +1,172 @@
+"""Zotero read-endpoint retry + error-message regression tests.
+
+The Zotero web API (api.zotero.org) is occasionally flaky from some networks
+— a request drops mid-flight and a fresh attempt clears it. `list_items` /
+`list_collections` previously turned every transient `httpx.RequestError` into
+an immediate hard 502 with a detail that could be the blank
+`"zotero request error: "` (when the exception's str() was empty), which is
+what users saw as "Search failed: zotero items error 502: ...".
+
+These tests pin the two fixes:
+  - `_zotero_get` retries ONCE on transient network errors (not timeouts) and
+    on HTTP 429 / 5xx; it gives up on persistent failure.
+  - The surfaced 502 detail is never blank — it falls back to the exception
+    type name when str(exc) is empty.
+
+No real network: we swap `httpx.AsyncClient` for a scripted fake whose
+`.get()` yields a fixed sequence of responses/exceptions (one per attempt).
+No DB needed — the read endpoints are stateless proxies.
+"""
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+from fastapi import HTTPException
+
+from app.routers import zotero
+
+
+# --------------------------------------------------------------------------- #
+# fakes
+# --------------------------------------------------------------------------- #
+class _FakeResp:
+    def __init__(self, status_code: int = 200, json_data=None, text: str | None = None):
+        self.status_code = status_code
+        self._json = json_data if json_data is not None else []
+        # Mimic httpx: .text is the decoded body string. Default to the
+        # JSON-encoded body so `if r.text` guards (list_collections uses one)
+        # see a truthy body, matching a real non-empty response.
+        self.text = text if text is not None else json.dumps(self._json)
+        self.headers: dict[str, str] = {}
+
+    def json(self):
+        return self._json
+
+
+class _FakeClient:
+    """Stand-in for httpx.AsyncClient whose `.get()` yields a scripted
+    sequence (one item per attempt). Shared class-level state so the fresh
+    client instance created on each retry continues the same script."""
+
+    script: list = []  # each item: a _FakeResp or a BaseException to raise
+    calls: int = 0
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, headers=None):
+        idx = _FakeClient.calls
+        _FakeClient.calls += 1
+        item = _FakeClient.script[idx]
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def _script(monkeypatch, items):
+    """Install a scripted fake httpx.AsyncClient + zero retry backoff."""
+    _FakeClient.script = list(items)
+    _FakeClient.calls = 0
+    monkeypatch.setattr(zotero.httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(zotero, "_RETRY_BACKOFF_S", 0)
+
+
+# --------------------------------------------------------------------------- #
+# _zotero_get: retry policy
+# --------------------------------------------------------------------------- #
+async def test_get_retries_transient_then_succeeds(monkeypatch):
+    _script(monkeypatch, [httpx.ConnectError("boom"), _FakeResp(200, json_data=[])])
+    r = await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert r.status_code == 200
+    assert _FakeClient.calls == 2  # initial blip + retry
+
+
+async def test_get_does_not_retry_timeout(monkeypatch):
+    # A ReadTimeout means the upstream is genuinely stalled — retrying would
+    # double an already-long wait. Fail fast, do NOT retry.
+    _script(monkeypatch, [httpx.ReadTimeout("read timed out")])
+    with pytest.raises(httpx.ReadTimeout):
+        await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert _FakeClient.calls == 1
+
+
+async def test_get_retries_5xx_then_succeeds(monkeypatch):
+    _script(monkeypatch, [_FakeResp(503), _FakeResp(200, json_data=[])])
+    r = await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert r.status_code == 200
+    assert _FakeClient.calls == 2
+
+
+async def test_get_retries_429_then_succeeds(monkeypatch):
+    _script(monkeypatch, [_FakeResp(429), _FakeResp(200, json_data=[])])
+    r = await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert r.status_code == 200
+    assert _FakeClient.calls == 2
+
+
+async def test_get_returns_4xx_without_retry(monkeypatch):
+    # 4xx (other than 429) is a real client error — surface it, don't retry.
+    _script(monkeypatch, [_FakeResp(403)])
+    r = await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert r.status_code == 403
+    assert _FakeClient.calls == 1
+
+
+async def test_get_persistent_failure_raises(monkeypatch):
+    _script(monkeypatch, [httpx.ConnectError("boom"), httpx.ConnectError("boom")])
+    with pytest.raises(httpx.ConnectError):
+        await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert _FakeClient.calls == 2  # tried, retried once, gave up
+
+
+# --------------------------------------------------------------------------- #
+# list_items / list_collections: end-to-end through the route function
+# --------------------------------------------------------------------------- #
+async def test_list_items_empty_message_error_is_descriptive(monkeypatch):
+    # The blank-message ConnectError that produced the user's empty
+    # "zotero request error: " must surface a non-empty, type-named detail.
+    _script(monkeypatch, [httpx.ConnectError(""), httpx.ConnectError("")])
+    with pytest.raises(HTTPException) as ei:
+        await zotero.list_items(
+            mode="web", user_id="u", api_key="k", q="2401.07041",
+            qmode="everything", limit=25, start=0, collection_key="",
+        )
+    assert ei.value.status_code == 502
+    detail = ei.value.detail
+    assert isinstance(detail, str) and detail.strip()  # never blank
+    assert "ConnectError" in detail  # type-name fallback filled the empty str()
+
+
+async def test_list_items_retries_then_returns_results(monkeypatch):
+    payload = [{"key": "ABCD1234", "data": {"title": "A Paper", "itemType": "journalArticle"}}]
+    _script(monkeypatch, [httpx.ConnectError("blip"), _FakeResp(200, json_data=payload)])
+    resp = await zotero.list_items(
+        mode="web", user_id="u", api_key="k", q="A Paper",
+        qmode="everything", limit=25, start=0, collection_key="",
+    )
+    assert resp.status_code == 200
+    body = json.loads(resp.body)
+    assert body["mode"] == "web"
+    assert len(body["results"]) == 1
+    assert body["results"][0]["title"] == "A Paper"
+    assert _FakeClient.calls == 2  # retried once after the blip
+
+
+async def test_list_collections_retries_then_returns_results(monkeypatch):
+    payload = [{"key": "COLL1", "data": {"name": "My Collection"}, "meta": {"numItems": 3}}]
+    _script(monkeypatch, [httpx.ConnectError("blip"), _FakeResp(200, json_data=payload)])
+    resp = await zotero.list_collections(mode="web", user_id="u", api_key="k")
+    assert resp.status_code == 200
+    body = json.loads(resp.body)
+    assert body["mode"] == "web"
+    assert len(body["results"]) == 1
+    assert body["results"][0]["name"] == "My Collection"
+    assert _FakeClient.calls == 2  # retried once after the blip

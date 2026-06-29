@@ -26,6 +26,7 @@ API reality (verified against Zotero 7/8):
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import re
@@ -58,6 +59,51 @@ _PING_TIMEOUT = httpx.Timeout(connect=1.5, read=2.0, write=2.0, pool=2.0)
 
 _ARXIV_RE = re.compile(r"(?:arxiv[:\s/]*|arxiv\.org/(?:abs|pdf)/)([0-9]{4}\.[0-9]{4,5}(?:v[0-9]+)?)", re.IGNORECASE)
 _UA = "little-alphaxiv/0.1 (zotero-integration)"
+
+
+# --------------------------------------------------------------------------- #
+# upstream GET with one retry on transient errors
+# --------------------------------------------------------------------------- #
+# Zotero (especially the web API, from networks with poor routing to
+# api.zotero.org) occasionally drops a request mid-flight — a reset that a
+# fresh attempt clears. Read GETs retry ONCE on transient network errors and on
+# HTTP 429 / 5xx. Timeouts are NOT retried: a ReadTimeout means the upstream is
+# genuinely stalled, and retrying would double an already-long wait — fail fast
+# with a clear message instead. Writes are not retried here (the web API's
+# Zotero-Write-Token already makes writes idempotent, but the local connector
+# has no such guard, so retry stays read-only).
+_RETRY_BACKOFF_S = 0.5
+_RETRY_MAX_ATTEMPTS = 2  # 1 initial attempt + 1 retry
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """A RequestError worth retrying: any network/protocol error EXCEPT a
+    timeout (timeouts = genuinely stalled upstream, not a blip)."""
+    return isinstance(exc, httpx.RequestError) and not isinstance(exc, httpx.TimeoutException)
+
+
+async def _zotero_get(
+    url: str, *, headers: dict[str, str], timeout: httpx.Timeout, trust_env: bool,
+) -> httpx.Response:
+    """GET a Zotero read URL with one retry on transient errors. Raises the
+    last httpx.RequestError on persistent failure; returns the httpx.Response
+    (status unchecked) on success — the caller inspects status_code and handles
+    4xx/5xx. 429 / 5xx are retried once before being surfaced."""
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                         trust_env=trust_env) as client:
+                r = await client.get(url, headers=headers)
+        except httpx.RequestError as exc:
+            if _is_transient(exc) and attempt + 1 < _RETRY_MAX_ATTEMPTS:
+                await asyncio.sleep(_RETRY_BACKOFF_S)
+                continue
+            raise
+        if (r.status_code == 429 or 500 <= r.status_code < 600) and attempt + 1 < _RETRY_MAX_ATTEMPTS:
+            await asyncio.sleep(_RETRY_BACKOFF_S)
+            continue
+        return r
+    raise RuntimeError("zotero get: unreachable")  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
@@ -265,12 +311,17 @@ async def list_items(
         url = f"{_WEB}/{path}?{urlencode(params)}"
         headers = _headers_web(api_key)
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True,
-                                 trust_env=(resolved != "local")) as client:
-        try:
-            r = await client.get(url, headers=headers)
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"zotero request error: {exc}") from exc
+    try:
+        r = await _zotero_get(url, headers=headers, timeout=_TIMEOUT,
+                              trust_env=(resolved != "local"))
+    except httpx.RequestError as exc:
+        # str(exc) is sometimes "" (e.g. a terse ConnectError on a dropped
+        # loopback / reset); fall back to the exception type so the surfaced
+        # message is never the blank "zotero request error: ".
+        raise HTTPException(
+            status_code=502,
+            detail=f"zotero request error: {str(exc) or type(exc).__name__}",
+        ) from exc
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail=f"zotero items returned {r.status_code}: {r.text[:200]}")
     try:
@@ -303,12 +354,14 @@ async def list_collections(
             raise HTTPException(status_code=400, detail="web mode requires user_id and api_key")
         url = f"{_WEB}/{path}?{urlencode(params)}"
         headers = _headers_web(api_key)
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True,
-                                 trust_env=(resolved != "local")) as client:
-        try:
-            r = await client.get(url, headers=headers)
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"zotero request error: {exc}") from exc
+    try:
+        r = await _zotero_get(url, headers=headers, timeout=_TIMEOUT,
+                              trust_env=(resolved != "local"))
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"zotero request error: {str(exc) or type(exc).__name__}",
+        ) from exc
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail=f"zotero collections returned {r.status_code}: {r.text[:200]}")
     data = r.json() if r.text else []
