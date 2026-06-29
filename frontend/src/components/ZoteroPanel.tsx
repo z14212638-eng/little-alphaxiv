@@ -137,28 +137,48 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Search the library for the current paper (by arXiv id, then title).
+  // Search the library for the current paper. By arXiv id (authoritative:
+  // the app saves the id into the item's `extra` field) AND by title (a
+  // fallback that catches items added via Zotero's own browser connector,
+  // which may not carry the arXiv id). The two searches run CONCURRENTLY
+  // rather than serially: the id search almost always returns 0 for a paper
+  // not yet saved, which previously forced a second, back-to-back upstream
+  // round trip before the user saw "not in your library" — the dominant cause
+  // of the long "Searching your Zotero library…" hang, especially against the
+  // (slow/flaky-from-some-networks) Zotero web API. Promise.allSettled so a
+  // failure of the fallback (title) search doesn't discard an authoritative
+  // (id) result.
   const findCurrentPaper = useCallback(async () => {
     if (!connected) return;
     setSearchingPaper(true);
     setMsg(null);
     try {
-      const matches: ZoteroItem[] = [];
+      const idP: Promise<ZoteroItem[]> = arxivId
+        ? zoteroSearchItems(creds, arxivId, 25).then((r) =>
+            r.results.filter((it) => normArxiv(it.arxivId) === normArxiv(arxivId)))
+        : Promise.resolve([]);
+      const titleP: Promise<ZoteroItem[]> = paper?.title
+        ? zoteroSearchItems(creds, paper.title.slice(0, 80), 25).then((r) =>
+            r.results.filter((it) => it.title.trim().toLowerCase() === (paper.title || "").trim().toLowerCase()))
+        : Promise.resolve([]);
+      const [idRes, titleRes] = await Promise.allSettled([idP, titleP]);
+
+      // The id search is the authoritative answer; if it failed we can't say
+      // whether the paper is in the library, so surface the error.
+      if (idRes.status === "rejected") throw idRes.reason;
+      let matches: ZoteroItem[] = idRes.value;
+      if (matches.length === 0) {
+        // No id match — use the title fallback. If that also failed, surface
+        // it (we couldn't complete the fallback check).
+        if (titleRes.status === "rejected") throw titleRes.reason;
+        matches = titleRes.value;
+      }
       const seen = new Set<string>();
-      const add = (items: ZoteroItem[]) => {
-        for (const it of items) {
-          if (!seen.has(it.key)) { seen.add(it.key); matches.push(it); }
-        }
-      };
-      if (arxivId) {
-        const r = await zoteroSearchItems(creds, arxivId, 25);
-        add(r.results.filter((it) => normArxiv(it.arxivId) === normArxiv(arxivId)));
+      const deduped: ZoteroItem[] = [];
+      for (const it of matches) {
+        if (!seen.has(it.key)) { seen.add(it.key); deduped.push(it); }
       }
-      if (matches.length === 0 && paper?.title) {
-        const r = await zoteroSearchItems(creds, paper.title.slice(0, 80), 25);
-        add(r.results.filter((it) => it.title.trim().toLowerCase() === (paper.title || "").trim().toLowerCase()));
-      }
-      setFound(matches);
+      setFound(deduped);
     } catch (e) {
       setMsg({ kind: "err", text: `Search failed: ${String((e as Error).message || e)}` });
     } finally {
