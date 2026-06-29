@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import * as api from "../lib/api";
+import { PasswordInput } from "../components/PasswordInput";
 
 export default function Login() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -79,8 +80,7 @@ export default function Login() {
         )}
         <label className="login-field">
           <span>Password</span>
-          <input
-            type="password"
+          <PasswordInput
             value={password}
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             onChange={(e) => setPassword(e.target.value)}

@@ -1712,3 +1712,22 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
 }
 .zotero-ok { color: var(--accent); }
 .zotero-err { color: var(--danger); }
+
+/* Password input show/hide toggle (login + reset pages). Appended at end of
+   file per the "new CSS at EOF" convention to avoid merge conflicts with
+   parallel worktrees. The input keeps its .login-field styling (border /
+   padding / focus ring); this only reserves room on the right for the eye
+   button and styles the button itself. */
+.pw-wrap { position: relative; }
+.pw-wrap input.pw-input { padding-right: 38px; }
+.pw-toggle {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 5px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.pw-toggle:hover { color: var(--text); background: var(--bg-3); }
+.pw-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.pw-toggle:disabled { opacity: 0.5; cursor: default; }
+.pw-toggle svg { width: 17px; height: 17px; display: block; }

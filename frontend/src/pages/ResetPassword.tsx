@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import * as api from "../lib/api";
+import { PasswordInput } from "../components/PasswordInput";
 
 export default function ResetPassword() {
   const [params] = useSearchParams();
@@ -50,8 +51,7 @@ export default function ResetPassword() {
         <p className="login-sub">Choose a new password for your account.</p>
         <label className="login-field">
           <span>New password</span>
-          <input
-            type="password"
+          <PasswordInput
             value={pw}
             autoComplete="new-password"
             onChange={(e) => setPw(e.target.value)}
@@ -61,8 +61,7 @@ export default function ResetPassword() {
         </label>
         <label className="login-field">
           <span>Confirm password</span>
-          <input
-            type="password"
+          <PasswordInput
             value={pw2}
             autoComplete="new-password"
             onChange={(e) => setPw2(e.target.value)}
