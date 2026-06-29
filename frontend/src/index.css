@@ -1719,7 +1719,7 @@ canvas, .pdf-textlayer, .pdf-page-canvas-wrap { transition: none; }
    padding / focus ring); this only reserves room on the right for the eye
    button and styles the button itself. */
 .pw-wrap { position: relative; }
-.pw-wrap input.pw-input { padding-right: 38px; }
+.pw-wrap input.pw-input { width: 100%; padding-right: 38px; }
 .pw-toggle {
   position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
   display: inline-flex; align-items: center; justify-content: center;
