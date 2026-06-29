@@ -110,3 +110,85 @@ async def test_forgot_creates_token_row_and_supersedes(client):
     # The older of the two must be marked used (superseded by the newer).
     used = [r for r in rows if r.used_at is not None]
     assert len(used) == 1
+
+
+# ---------------------------------------------------------------------------
+# Reset password.
+# ---------------------------------------------------------------------------
+
+
+async def _reset_token_for(client, identifier):
+    link = await _grab_reset_link(client, identifier)
+    return link.split("token=")[1]
+
+
+async def test_reset_succeeds_and_invalidates_old_password(client):
+    await _register(client, username="bob", email="bob@example.com", password="oldpass123")
+    # Old password works.
+    r0 = await client.post("/api/auth/login", json={"username": "bob", "password": "oldpass123"})
+    assert r0.is_success
+    token = await _reset_token_for(client, "bob")
+    # Reset → 200 + auto-login (Me returned).
+    r = await client.post(
+        "/api/auth/reset-password", json={"token": token, "new_password": "brandnew9"}
+    )
+    assert r.is_success, r.text
+    assert r.json()["username"] == "bob"
+    # Token is single-use: reuse → 401.
+    r2 = await client.post(
+        "/api/auth/reset-password", json={"token": token, "new_password": "another11"}
+    )
+    assert r2.status_code == 401
+    # Old password now fails.
+    r3 = await client.post("/api/auth/login", json={"username": "bob", "password": "oldpass123"})
+    assert r3.status_code == 401
+    # New password works.
+    r4 = await client.post("/api/auth/login", json={"username": "bob", "password": "brandnew9"})
+    assert r4.is_success
+
+
+async def test_reset_expired_token_returns_410(client):
+    await _register(client, username="carol", email="carol@example.com", password="pass1234")
+    token = await _reset_token_for(client, "carol")
+    # Backdate the row so the token is expired.
+    async with dbmod.async_session_factory() as s:
+        row = (await s.exec(select(PasswordResetRow).where(
+            PasswordResetRow.used_at.is_(None)
+        ))).first()
+        row.expires_at = int(time.time()) - 1
+        s.add(row)
+        await s.commit()
+    r = await client.post(
+        "/api/auth/reset-password", json={"token": token, "new_password": "newpass12"}
+    )
+    assert r.status_code == 410
+
+
+async def test_reset_invalidates_all_sessions(client):
+    await _register(client, username="dave", email="dave@example.com", password="pass1234")
+    # Login creates a session; the cookie jar carries it.
+    await client.post("/api/auth/login", json={"username": "dave", "password": "pass1234"})
+    me1 = await client.get("/api/auth/me")
+    assert me1.is_success
+    token = await _reset_token_for(client, "dave")
+    # Reset uses a fresh token; it purges all sessions.
+    await client.post(
+        "/api/auth/reset-password", json={"token": token, "new_password": "newpass12"}
+    )
+    # The OLD session cookie must now be invalid (reset issued a new one).
+    # Note: httpx carries the new Set-Cookie from reset-password, so /me here
+    # reflects the NEW session — we instead verify the old session row is gone
+    # by counting session rows for the user (should be exactly 1: the new one).
+    async with dbmod.async_session_factory() as s:
+        dave = (await s.exec(select(User).where(User.username == "dave"))).first()
+        from app.models import Session as SessionRow
+        sessions = (await s.exec(select(SessionRow).where(SessionRow.user_id == dave.id))).all()
+    assert len(sessions) == 1  # old sessions purged; only the new one remains
+
+
+async def test_reset_garbage_token_returns_401(client):
+    r = await client.post(
+        "/api/auth/reset-password",
+        json={"token": "not-a-real-token", "new_password": "newpass12"},
+    )
+    assert r.status_code == 401

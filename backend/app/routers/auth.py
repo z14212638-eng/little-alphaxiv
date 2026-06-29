@@ -80,6 +80,15 @@ class ForgotBody(BaseModel):
     identifier: str
 
 
+class ResetBody(BaseModel):
+    token: str
+    new_password: str = Field(min_length=PASSWORD_MIN)
+
+
+class AccountBody(BaseModel):
+    email: str | None = None
+
+
 def _set_session_cookie(response: Response, sid: str, expires_at: int) -> None:
     value = security.sign_session(sid, expires_at)
     response.set_cookie(
@@ -201,6 +210,45 @@ async def forgot_password(
 
     await send_reset_email(user.email, user.username, _build_reset_link(token))
     return {"ok": True, "message": GENERIC_FORGOT_MSG}
+
+
+@router.post("/reset-password", response_model=MeResponse)
+async def reset_password(
+    body: ResetBody,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> MeResponse:
+    """Verify the token, set the new password, purge all the user's sessions
+    (so any old cookie dies the moment the password changes), then issue a
+    fresh session (auto-login → frontend redirects to /)."""
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    row = (
+        await session.exec(
+            select(PasswordResetRow).where(PasswordResetRow.token_hash == token_hash)
+        )
+    ).first()
+    now = int(time.time())
+    if row is None or row.used_at is not None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or used reset token")
+    if row.expires_at < now:
+        raise HTTPException(status.HTTP_410_GONE, "reset token expired")
+    user = await session.get(User, row.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid reset token")
+    user.password_hash = security.hash_password(body.new_password)
+    row.used_at = now
+    # Invalidate ALL of this user's sessions — old cookies die immediately.
+    old_sessions = (
+        await session.exec(select(Session).where(Session.user_id == user.id))
+    ).all()
+    for s in old_sessions:
+        await session.delete(s)
+    await session.commit()
+    await _issue_session(response, session, user)
+    has_data = await _user_has_data(session, user.id)
+    return MeResponse(
+        id=user.id, username=user.username, email=user.email, hasData=has_data
+    )
 
 
 @router.post("/logout")
