@@ -3,65 +3,106 @@
 A self-hosted, alphaxiv-style paper-reading app for you and a few friends.
 Chat with an AI to find arXiv papers, click a link, and the PDF opens in the
 left panel with a paper-aware assistant ready in the right panel. Bring your
-own OpenAI-compatible API key — no quotas, no shared accounts, all data stays
-in your own browser.
+own OpenAI-compatible API key — no quotas, no shared accounts.
+
+Each user registers an account; their chat history, PDF annotations, and
+provider settings live on the **server** (a SQLite database), encrypted at rest.
+Switch browsers → just sign back in and everything's there. No more "my history
+is gone because I cleared cookies / used a different machine."
 
 ```
  ┌─ Sidebar ─┐  ┌── General chat ──┐     ┌── Paper view ──────────────────┐
  │ + New chat│  │  find me papers   │     │  PDF (pdf.js)  │  Assistant     │
  │ conv list │  │  on X ...         │     │  preview       │  (paper text   │
  │ ⚙ Settings│  │  [clickable cards]│ ──▶ │  (left)        │   in context)  │
- └───────────┘  └───────────────────┘     └────────────────┴────────────────┘
+ │ ⎋ Log out │  └───────────────────┘     └────────────────┴────────────────┘
+ └───────────┘
 ```
 
 ## What's here
 
-- **`backend/`** — a stateless FastAPI CORS proxy (~5 small files). Stores
-  nothing. Exists only because arXiv and most LLM gateways send no CORS
-  headers, so the browser can't reach them directly. Your API key is sent
-  per-request from the browser and never persisted server-side.
-- **`frontend/`** — Vite + React + TypeScript SPA. All state (providers,
-  conversations, cached paper text) lives in your browser (localStorage +
-  IndexedDB).
-- **`docs/designs/`** — the validated design doc.
+- **`backend/`** — a FastAPI app. Originally a stateless CORS proxy; now also
+  owns a **SQLite database** (`SQLModel` + `aiosqlite` + `Alembic`) for per-user
+  persistence and **user auth** (httpOnly session cookies). It still proxies
+  arXiv / LLM gateways / PDFs (those send no CORS headers), but your API key is
+  now stored server-side, **Fernet-encrypted at rest**, and the browser only
+  ever sends a `provider_id` — the plaintext key never travels with each chat
+  request.
+- **`frontend/`** — Vite + React + TypeScript SPA. State is hydrated from the
+  backend on login; nothing of substance persists in the browser anymore (a
+  tiny `lax-theme` localStorage cache is kept only to avoid a flash of the wrong
+  colorscheme before login resolves).
+- **`docs/designs/`** — the validated design docs.
 
 ## How it works
 
-- **Discovery (general chat):** you describe what you want; the assistant
-  calls a `search_arxiv` tool (and optionally `web_search`); results render as
+- **Auth + persistence:** register/login (`/login`); the backend sets an
+  httpOnly `lax_session` cookie (signed via `itsdangerous`, looked up in a
+  `sessions` table — logout deletes the row). Every API call is scoped to the
+  authenticated `user.id`. Chat history, annotations, provider config, and
+  settings all live in SQLite, per-user.
+- **Discovery (general chat):** you describe what you want; the assistant calls
+  a `search_arxiv` tool (and optionally `web_search`); results render as
   clickable paper cards. Click → paper view.
-- **Paper view:** the PDF loads via the proxy (cached to disk); pdf.js
-  extracts the full text once (`getTextContent`), cached in IndexedDB; that
-  text is injected into the chat context so the assistant can discuss the
-  paper's actual content. Re-sending the full text each turn is cheap via
-  provider prompt caching.
-- **Tools run in the browser.** The backend is a dumb pipe; the OpenAI-style
+- **Paper view:** the PDF loads via the proxy (cached to disk); pdf.js extracts
+  the full text once (`getTextContent`), cached in a **global** `papers` table
+  (same arxiv_id → same text, deduplicated across users); that text is injected
+  into the chat context so the assistant can discuss the paper's actual content.
+- **Tools run in the browser.** The backend proxies + persists; the OpenAI-style
   tool-calling loop lives in the frontend (`src/lib/llm.ts`).
+- **One-time migration:** on first login after upgrading from the old
+  browser-only version, if the browser still holds legacy IndexedDB +
+  localStorage data, the app offers to import it into your account (idempotent).
 
 ## Run it
 
-### 1. Backend (proxy)
+### A. Single-machine (simplest, localhost-only)
+
+Open **two** terminals:
 
 ```bash
+# Terminal 1 — backend
 cd backend
-# uses your Agent_env conda env if present (see run.sh)
-./run.sh
-# or manually:
-#   pip install -r requirements.txt
-#   uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
+./run.sh                      # Windows: run.bat
+# On first start this auto-creates little_alphaxiv.db + generates backend/.env
 
-### 2. Frontend (app)
-
-```bash
+# Terminal 2 — frontend
 cd frontend
 npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 . Vite proxies `/api/*` → `http://127.0.0.1:8000`.
+Open **http://127.0.0.1:5173** → you're redirected to `/login` → click
+**Register**, pick a username + password → **Settings** → add an OpenAI-compatible
+provider (see below) and set it default → back to the chat.
 
-### 3. Configure a provider
+Vite proxies `/api/*` → `http://127.0.0.1:8000`. No env vars needed for the
+default setup.
+
+### B. LAN multi-user (the original goal: colleagues register & log in)
+
+`run.sh`/`run.bat` bind `127.0.0.1` only. For LAN access, serve the built
+frontend from the backend (same-origin — avoids all cookie/CORS friction):
+
+```bash
+# 1. Build the frontend (produces frontend/dist)
+cd frontend && npm run build
+
+# 2. Run the backend on 0.0.0.0; it auto-mounts frontend/dist at "/"
+cd ../backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Find your LAN IP (`ipconfig` → the `192.168.x.x` one). Colleagues open
+**`http://<your-ip>:8000/`** in their browser → each registers their own account,
+adds their own provider, and chats. Everyone's data is independent and
+invisible to others.
+
+> Same-origin serving means you don't need to set `LAX_ALLOWED_ORIGINS`.
+> ⚠️ `--host 0.0.0.0` exposes the backend — keep it on the LAN, not the public
+> internet (the DB now holds everyone's encrypted API keys + chat history).
+
+### Configure a provider
 
 Click ⚙ Settings → add an OpenAI-compatible provider:
 
@@ -73,62 +114,106 @@ Click ⚙ Settings → add an OpenAI-compatible provider:
 | Model    | `gpt-4o-mini`                             |
 
 Any OpenAI-compatible endpoint works (OpenAI, an OpenAI-compatible Anthropic
-gateway, local Ollama with the OpenAI shim, one-api/new-api, etc.). Set one
-as default. Keys are stored only in this browser's localStorage.
+gateway, local Ollama with the OpenAI shim, one-api/new-api, etc.). Set one as
+default. The key is sent to the server **once** (over your loopback/LAN),
+encrypted with Fernet, and stored; afterward the UI only shows a masked preview
+(`sk-m…cret`).
 
 Then start a new chat and ask: *"find me recent papers on vision transformers"*.
 
+## Configuration (env vars, all optional)
+
+Set in `backend/.env` (copy from `backend/.env.example`) or the environment.
+Defaults work for localhost dev.
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LAX_DATABASE_URL` | `sqlite:///./little_alphaxiv.db` | SQLite file (resolved relative to `backend/`). |
+| `LAX_SECRET_KEY` | *(auto-generated on first run)* | Fernet key for encrypting stored API keys + signing session cookies. Written to `backend/.env` on first start; **keep it secret — losing it orphans all encrypted keys + sessions.** |
+| `LAX_ALLOWED_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Comma-separated browser origins for CORS. Pinned (no `*`) because credentials flow through cookies. Add your LAN origin if running cross-origin. |
+| `LAX_SECURE_COOKIES` | `false` | Set `true` when behind HTTPS so the session cookie gets the `Secure` flag. |
+| `LAX_SESSION_MAX_AGE_DAYS` | `30` | Session cookie + row lifetime. |
+| `LAX_PDF_CACHE` | `~/.little_alphaxiv/pdf_cache` | PDF disk-cache dir (content-addressed, global, non-sensitive). |
+
 ## Status
 
-| Step | Feature                              | State |
-|------|--------------------------------------|-------|
-| 1    | LLM proxy + pure chat (streaming)    | ✅ verified |
-| 2    | arXiv search + tool-calling loop     | ✅ backend verified; browser E2E pending your key |
-| 3    | PDF proxy + pdf.js preview           | ✅ verified (fetch+cache+range) |
-| 4    | Full-text extraction + paper chat    | ✅ coded; E2E pending |
-| 5    | IndexedDB persistence                | ✅ coded |
-| 6    | anysearch MCP (`web_search`)         | ⏳ stub — real wiring TODO |
-| 7    | Settings + multi-provider            | ✅ coded |
-| 8    | Polish (sidebar, streaming UX)       | 🔧 partial |
+| Area | Feature | State |
+|------|---------|-------|
+| Auth | register/login/logout, httpOnly session cookies, bcrypt | ✅ verified |
+| Persistence | SQLite + per-user conversations/annotations/providers/settings | ✅ verified |
+| Security | API keys Fernet-encrypted at rest; plaintext key leaves browser only at save | ✅ verified |
+| 1 | LLM proxy + streaming chat (now auth-aware, `provider_id`) | ✅ verified |
+| 2 | arXiv search + tool-calling loop | ✅ verified (E2E via mock LLM) |
+| 3 | PDF proxy + pdf.js preview + range | ✅ verified |
+| 4 | Full-text extraction + paper chat | ✅ verified |
+| 5 | Browser → server one-time migration | ✅ verified (E2E: data survives a browser switch) |
+| 6 | anysearch MCP (`web_search`) | ⏳ stub — real wiring TODO |
+| 7 | Settings + multi-provider (per-user) | ✅ verified |
+| 8 | Zotero integration (local + web) | ✅ working; per-request creds (v1) |
 
-### Known TODO
+### Known follow-ups (non-blocking)
 
-- **Step 6 — real anysearch MCP wiring.** `backend/app/routers/websearch.py`
-  is a placeholder. Wiring your existing anysearch MCP server means running an
-  MCP client (stdio or HTTP transport) in the backend and proxying `search`
-  calls. I need your anysearch server's launch command / transport to finish
-  this.
-- **Direct paper-URL navigation** (pasting `/paper/<id>`) works but has no
-  paper title/abstract metadata until extraction runs; the model reads the
-  title from the extracted text. Fetching metadata by arxiv id via `id_list`
-  is a small backend addition if you want it.
-- **E2E browser test** of the full search → card → PDF → extract → chat loop
-  needs your real API key in the UI. Backend pieces are individually verified.
+- **Step 6 — real anysearch MCP wiring.** `backend/app/routers/websearch.py` is
+  a placeholder.
+- **~18 Playwright drivers** in `tools/` still use the old localStorage
+  `seed_provider`; only `drive.py` and the new `drive_auth_persistence.py` were
+  adapted to API-driven auth. They'll fail until adapted — doesn't affect the
+  app itself.
+- **`zotero.py` full migration** — the ~960-line router still receives Zotero
+  creds per request (stored encrypted in `user_settings`, returned decrypted to
+  the owner). Functional; a full rewrite to read creds from the DB inside each
+  handler is a future cleanup.
+- **No password recovery** — LAN app, no email server. Forgetting a password
+  means deleting `little_alphaxiv.db` (loses all data).
 
 ## Project layout
 
 ```
 little_alphaxiv/
   backend/
-    app/main.py              # FastAPI app, CORS, routers
-    app/routers/llm.py       # /api/llm — OpenAI-compatible passthrough + SSE
-    app/routers/search.py    # /api/search — arXiv Atom API → JSON
-    app/routers/pdf.py       # /api/pdf/{id} — arXiv PDF proxy + disk cache + ranges
-    app/routers/websearch.py # /api/websearch — anysearch MCP (STUB)
-    run.sh, requirements.txt
+    app/main.py              # FastAPI app, lifespan (DB+migrations+security init), CORS, routers
+    app/security.py          # Fernet (api keys) + bcrypt (passwords) + itsdangerous (session cookie)
+    app/db.py                # async engine, WAL PRAGMAs, session factory, get_session dependency
+    app/models.py            # 8 SQLModel tables
+    app/deps.py              # current_user dependency (the per-user scoping chokepoint)
+    app/routers/auth.py      # /api/auth/{register,login,logout,me}
+    app/routers/providers.py # /api/providers — per-user provider CRUD (key masked on read)
+    app/routers/settings.py  # /api/settings — theme, searchSources, zotero (keys encrypted)
+    app/routers/conversations.py  # /api/conversations — messages stored as JSON column
+    app/routers/annotations.py     # /api/annotations — per-user PDF annotations
+    app/routers/papers.py    # /api/papers — GLOBAL paper cache (full_text dedup)
+    app/routers/migrate.py   # /api/migrate/import — one-time browser→server import
+    app/routers/llm.py       # /api/llm — passthrough + SSE (takes provider_id, decrypts key)
+    app/routers/{search,pdf,models,websearch,semantic_scholar,openalex,zotero,zotero_note_sync}.py
+    alembic/                 # migrations (lifespan runs `upgrade head` on startup)
+    run.sh, run.bat, requirements.txt
   frontend/
-    src/lib/api.ts           # fetch wrappers + SSE stream parser
+    src/lib/api.ts           # fetch wrappers (credentials:include), SSE parser, auth/CRUD/migrate
     src/lib/llm.ts           # client-side tool-calling loop
-    src/lib/extract.ts       # pdf.js getTextContent full-text extraction
-    src/lib/db.ts            # IndexedDB (conversations + papers)
-    src/store/{settings,conversations}.ts  # zustand stores
+    src/lib/db.ts            # thin shim → /api/papers (was IndexedDB)
+    src/lib/legacyDb.ts      # read-only IDB reader, used once by migrate.ts
+    src/lib/migrate.ts       # one-time browser→server import
+    src/store/{settings,conversations,annotations,zoteroNoteSync,ui}.ts  # hydrate from backend
+    src/pages/Login.tsx      # register/login
     src/components/{ChatPanel,PdfViewer,PaperCard,Sidebar}.tsx
     src/views/{ChatView,PaperView,SettingsView}.tsx
-  docs/designs/2026-06-17-little-alphaxiv-design.md
+  tools/
+    drive_auth_persistence.py  # E2E: register→chat→refresh→fresh-browser-login→data-present→logout
+    mock_llm.py                # mock OpenAI-compatible server on :5050 (no real key needed)
+    drive_*.py                 # other Playwright drivers (most still on the old seed pattern)
+  docs/designs/
 ```
 
 ## Security note
 
-API keys live in browser localStorage (XSS-exposed). This is acceptable for a
-self-hosted tool shared among a few trusted people where you control the code.
-Don't expose the URL publicly without adding auth.
+API keys are stored server-side, **Fernet-encrypted at rest** (keyed by
+`LAX_SECRET_KEY`). The plaintext key leaves the browser only once — when you
+save a provider — travels over your loopback/LAN to the backend, and is
+decrypted in memory only for the duration of one upstream LLM call (or to show
+the masked preview back to you, the owner). It is never logged. Passwords are
+bcrypt-hashed. Sessions are httpOnly + signed cookies backed by a DB table
+(logout = row delete).
+
+The app is designed for a trusted LAN. Don't expose it to the public internet
+without adding TLS (`LAX_SECURE_COOKIES=true`) and reconsidering registration
+openness.
