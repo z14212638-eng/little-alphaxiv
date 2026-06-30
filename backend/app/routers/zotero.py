@@ -64,7 +64,15 @@ _LOCAL_CONN = _LOCAL
 # path. Empty/unset = current behavior (direct). See docs/designs.
 _ZOTERO_PROXY = os.environ.get("LAX_ZOTERO_PROXY", "").strip() or None
 
-_TIMEOUT = httpx.Timeout(connect=4.0, read=30.0, write=15.0, pool=10.0)
+# Read timeout is generous (60s) because Zotero's qmode=everything full-text
+# search is variable server-side: on a ~526-item library the cold-cache first
+# call ranges 1-30s (measured 2026-06-30 — 10/10 at read=60s, max 21.74s; a
+# 30.69s stall observed at read=30s). The old 30s read timeout turned a normal
+# slow-but-completing everything search into a hard ReadTimeout. 60s absorbs
+# the observed variance; the _zotero_get retry (round-1 fix) covers the rare
+# >60s stall. The frontend also avoids firing two everything searches
+# concurrently (findCurrentPaper's title search uses titleCreatorYear).
+_TIMEOUT = httpx.Timeout(connect=4.0, read=60.0, write=15.0, pool=10.0)
 _PDF_TIMEOUT = httpx.Timeout(connect=10.0, read=90.0, write=90.0, pool=15.0)
 # Short timeout for the local ping — Zotero desktop is on the loopback, so 2s
 # is plenty to tell "running" from "not running" without hanging auto mode.

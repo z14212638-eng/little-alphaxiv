@@ -153,12 +153,19 @@ export function ZoteroPanel({ arxivId, onClose }: Props) {
     setSearchingPaper(true);
     setMsg(null);
     try {
+      // idP searches by arXiv id, which lives in the item's `extra` field —
+      // only qmode=everything matches `extra`, so this one MUST stay everything.
       const idP: Promise<ZoteroItem[]> = arxivId
         ? zoteroSearchItems(creds, arxivId, 25).then((r) =>
             r.results.filter((it) => normArxiv(it.arxivId) === normArxiv(arxivId)))
         : Promise.resolve([]);
+      // titleP matches by exact title — qmode=titleCreatorYear is ~0.5s and
+      // more precise than everything (which can match the title inside the
+      // abstract, only for the exact-title filter below to reject it). Firing
+      // TWO everything searches here was the main cause of the panel's
+      // intermittent ReadTimeout (everything is 1-30s cold-cache).
       const titleP: Promise<ZoteroItem[]> = paper?.title
-        ? zoteroSearchItems(creds, paper.title.slice(0, 80), 25).then((r) =>
+        ? zoteroSearchItems(creds, paper.title.slice(0, 80), 25, "titleCreatorYear").then((r) =>
             r.results.filter((it) => it.title.trim().toLowerCase() === (paper.title || "").trim().toLowerCase()))
         : Promise.resolve([]);
       const [idRes, titleRes] = await Promise.allSettled([idP, titleP]);
