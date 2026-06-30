@@ -64,22 +64,28 @@ _UA = "little-alphaxiv/0.1 (zotero-integration)"
 # --------------------------------------------------------------------------- #
 # upstream GET with one retry on transient errors
 # --------------------------------------------------------------------------- #
-# Zotero (especially the web API, from networks with poor routing to
-# api.zotero.org) occasionally drops a request mid-flight — a reset that a
-# fresh attempt clears. Read GETs retry ONCE on transient network errors and on
-# HTTP 429 / 5xx. Timeouts are NOT retried: a ReadTimeout means the upstream is
-# genuinely stalled, and retrying would double an already-long wait — fail fast
-# with a clear message instead. Writes are not retried here (the web API's
-# Zotero-Write-Token already makes writes idempotent, but the local connector
-# has no such guard, so retry stays read-only).
+# Zotero (especially the web API, especially qmode=everything full-text
+# searches) is variable server-side: the FIRST search on a cold cache can
+# take ~10s on a ~526-item library, while the immediate retry hits a warm
+# cache and returns in ~0.5s (measured 2026-06-30 against a real library).
+# A ReadTimeout on a read GET is therefore usually a cold-cache slow query,
+# NOT a genuinely dead upstream — a single retry almost always succeeds
+# fast. So read GETs retry ONCE on ANY httpx.RequestError (network/protocol
+# errors AND timeouts) and on HTTP 429 / 5xx. Writes are not retried here
+# (the web API's Zotero-Write-Token already makes writes idempotent, but the
+# local connector has no such guard, so retry stays read-only).
 _RETRY_BACKOFF_S = 0.5
 _RETRY_MAX_ATTEMPTS = 2  # 1 initial attempt + 1 retry
 
 
 def _is_transient(exc: BaseException) -> bool:
-    """A RequestError worth retrying: any network/protocol error EXCEPT a
-    timeout (timeouts = genuinely stalled upstream, not a blip)."""
-    return isinstance(exc, httpx.RequestError) and not isinstance(exc, httpx.TimeoutException)
+    """A RequestError worth retrying. For Zotero this INCLUDES timeouts:
+    measured evidence shows a ReadTimeout on a qmode=everything search is a
+    cold-cache slow query whose immediate retry hits warm cache (~0.5s vs
+    ~10s+). Treating timeouts as transient turns a hard 30s failure into a
+    ~30.5s success for the common cold-cache case; the persistent-stall
+    case still surfaces the timeout after the single retry."""
+    return isinstance(exc, httpx.RequestError)
 
 
 async def _zotero_get(
