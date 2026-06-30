@@ -421,13 +421,20 @@ export async function zoteroStatus(c: ZoteroCreds): Promise<{ ok: boolean; mode:
   return zoteroGet("status", c);
 }
 
-/** Search/list Zotero items. Empty `q` lists recent items. */
+/** Search/list Zotero items. Empty `q` lists recent items.
+ *  `qmode` defaults to "everything" (full-text — searches all fields incl. the
+ *  `extra` arXiv-id line), which is what the library Search box wants. Pass
+ *  "titleCreatorYear" for title/author/year-only matching: it is ~0.5s vs
+ *  everything's 1-30s cold-cache cost, and for an exact-title lookup it is the
+ *  more precise net (everything can match the title string inside the abstract,
+ *  which the caller's exact-title filter then rejects anyway). */
 export async function zoteroSearchItems(
   c: ZoteroCreds,
   q: string,
-  limit = 25
+  limit = 25,
+  qmode: "everything" | "titleCreatorYear" = "everything"
 ): Promise<{ total: number; results: ZoteroItem[]; mode: string }> {
-  return zoteroGet("items", c, { q, limit: String(limit), qmode: q ? "everything" : "" });
+  return zoteroGet("items", c, { q, limit: String(limit), qmode: q ? qmode : "" });
 }
 
 /** List Zotero collections. */
