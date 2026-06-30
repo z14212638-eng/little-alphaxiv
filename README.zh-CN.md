@@ -22,18 +22,13 @@ key，数据留在你自己的服务器上。
 
 ## 🎬 演示
 
-<details>
-<summary><b>点击展开演示 GIF</b></summary>
-
-| 通用聊天 → 论文发现 | 论文视图（PDF + 懂论文的助手） |
+| 通用聊天 → 论文发现 | 论文视图（PDF + 助手 + 批注） |
 |:---:|:---:|
-| <img src="./example_demo/main-paper-chat.gif" width="420" alt="通用聊天发现论文" /> | <img src="./example_demo/pdf-preview-page.gif" width="420" alt="论文视图：PDF 与助手" /> |
+| <img src="./example_demo/main-paper-chat.gif" width="420" alt="通用聊天发现论文" /> | <img src="./example_demo/pdf-preview-page.gif" width="420" alt="论文视图：PDF、助手与批注" /> |
 
-| PDF 划线高亮与批注 | Zotero 笔记同步 |
+| 主题切换（11 套主题） | Zotero 笔记同步 |
 |:---:|:---:|
-| <img src="./example_demo/change-theme.gif" width="420" alt="PDF 划线高亮与批注" /> | <img src="./example_demo/zotero-sync.gif" width="420" alt="批注同步到 Zotero" /> |
-
-</details>
+| <img src="./example_demo/change-theme.gif" width="420" alt="在多套阅读主题间切换" /> | <img src="./example_demo/zotero-sync.gif" width="420" alt="批注同步到 Zotero" /> |
 
 ---
 
