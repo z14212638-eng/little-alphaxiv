@@ -89,13 +89,23 @@ async def test_get_retries_transient_then_succeeds(monkeypatch):
     assert _FakeClient.calls == 2  # initial blip + retry
 
 
-async def test_get_does_not_retry_timeout(monkeypatch):
-    # A ReadTimeout means the upstream is genuinely stalled — retrying would
-    # double an already-long wait. Fail fast, do NOT retry.
-    _script(monkeypatch, [httpx.ReadTimeout("read timed out")])
+async def test_get_retries_timeout_then_succeeds(monkeypatch):
+    # A ReadTimeout on a Zotero qmode=everything search is a cold-cache slow
+    # query, NOT a dead upstream — measured: first call ~10s on a 526-item
+    # library, immediate retry hits warm cache in ~0.5s. So we retry once;
+    # the retry almost always succeeds fast.
+    _script(monkeypatch, [httpx.ReadTimeout("read timed out"), _FakeResp(200, json_data=[])])
+    r = await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
+    assert r.status_code == 200
+    assert _FakeClient.calls == 2  # timed out, retried, succeeded
+
+
+async def test_get_persistent_timeout_raises(monkeypatch):
+    # If BOTH attempts time out, surface the ReadTimeout (don't loop forever).
+    _script(monkeypatch, [httpx.ReadTimeout("read timed out"), httpx.ReadTimeout("read timed out")])
     with pytest.raises(httpx.ReadTimeout):
         await zotero._zotero_get("http://x", headers={}, timeout=zotero._TIMEOUT, trust_env=True)
-    assert _FakeClient.calls == 1
+    assert _FakeClient.calls == 2  # tried, retried once, gave up
 
 
 async def test_get_retries_5xx_then_succeeds(monkeypatch):
