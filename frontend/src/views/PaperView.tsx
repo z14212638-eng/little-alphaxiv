@@ -279,5 +279,5 @@ function PAPER_SYSTEM_PREAMBLE(paperId: string): string {
 The user can see the PDF on the left and is chatting with you on the right.
 The full text of the paper is provided below. Answer questions about its content - methods, datasets, results, limitations, related work - grounded in the provided text.
 If the user asks something not covered in the paper, say so. Be concise and precise. Format answers with markdown.
-You have paper-search tools (search_arxiv, and optionally search_openalex / search_semantic_scholar) if the user wants to find related papers.`;
+You have paper-search tools (search_arxiv, and optionally search_openalex / search_semantic_scholar) if the user wants to find related papers. If those don't surface what the user needs, fall back to web_search (general web search via anysearch) — useful for related IEEE/ACM/Springer papers, paywalled work, or a DOI/title-only lookup; non-arXiv results cite by URL and open externally.`;
 }

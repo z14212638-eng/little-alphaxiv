@@ -41,6 +41,10 @@ services:
       # Empty = direct (current behavior). Only Zotero web is affected;
       # arXiv / PDF / LLM stay direct.
       LAX_ZOTERO_PROXY: "${LAX_ZOTERO_PROXY:-}"
+      # web_search tool (anysearch MCP over HTTP). Without a key, /api/websearch
+      # returns configured:false and the LLM falls back to academic search tools.
+      ANYSEARCH_API_KEY: "${ANYSEARCH_API_KEY:-}"
+      LAX_ANYSEARCH_URL: "${LAX_ANYSEARCH_URL:-}"
     volumes:
       # SQLite DB + PDF cache + the persisted LAX_SECRET_KEY all live here.
       - ./data:/app/data
