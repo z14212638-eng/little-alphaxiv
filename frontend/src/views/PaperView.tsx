@@ -26,7 +26,12 @@ import { ensurePaperMeta, hasRealTitle } from "../lib/paperMeta";
 import type { StylePreset } from "../types";
 
 export function PaperView() {
-  const { arxivId, convId } = useParams<{ arxivId: string; convId?: string }>();
+  const { arxivId: rawArxivId, convId } = useParams<{ arxivId: string; convId?: string }>();
+  // React Router 6 decodes %2F (→ '/') but leaves %3A in a path param, so a DOI
+  // id like 'doi:10.1/x' arrives as 'doi%3A10.1/x'. decodeURIComponent once to
+  // recover the real id; re-encodeURIComponent it into any URL we build (GET
+  // /api/papers, navigate). Without this the id double-encodes and 404s.
+  const arxivId = rawArxivId ? decodeURIComponent(rawArxivId) : undefined;
   const navigate = useNavigate();
   const conversations = useConversations((s) => s.conversations);
   const loaded = useConversations((s) => s.loaded);
@@ -92,7 +97,7 @@ export function PaperView() {
     if (threads[0]) {
       setActive(threads[0].id);
       setConvId(threads[0].id);
-      navigate(`/paper/${arxivId}/${threads[0].id}`, { replace: true });
+      navigate(`/paper/${encodeURIComponent(arxivId)}/${threads[0].id}`, { replace: true });
       return;
     }
     // No thread yet — create an empty one (in-memory until first message).
@@ -105,7 +110,7 @@ export function PaperView() {
     }).then((c) => {
       setActive(c.id);
       setConvId(c.id);
-      navigate(`/paper/${arxivId}/${c.id}`, { replace: true });
+      navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arxivId, loaded]);
@@ -150,7 +155,7 @@ export function PaperView() {
     }).then((c) => {
       setActive(c.id);
       setConvId(c.id);
-      navigate(`/paper/${arxivId}/${c.id}`, { replace: true });
+      navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
       setShowHistory(false);
     });
   }
@@ -158,7 +163,7 @@ export function PaperView() {
   function handleSelectConversation(id: string) {
     setActive(id);
     setConvId(id);
-    if (arxivId) navigate(`/paper/${arxivId}/${id}`, { replace: true });
+    if (arxivId) navigate(`/paper/${encodeURIComponent(arxivId)}/${id}`, { replace: true });
     setShowHistory(false);
   }
 

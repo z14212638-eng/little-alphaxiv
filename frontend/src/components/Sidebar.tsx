@@ -152,7 +152,7 @@ export function Sidebar() {
                   className={`conv-item ${active ? "active" : ""}`}
                   onClick={() => {
                     setActive(it.rep.id);
-                    navigate(`/paper/${it.paperId}/${it.rep.id}`);
+                    navigate(`/paper/${encodeURIComponent(it.paperId)}/${it.rep.id}`);
                   }}
                 >
                   <span className="conv-tag">📄</span>

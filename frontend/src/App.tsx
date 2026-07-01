@@ -61,7 +61,7 @@ export default function App() {
     if (conversations.length > 0) {
       const first = conversations[0];
       setActive(first.id);
-      navigate(first.type === "paper" ? `/paper/${first.paper_id}/${first.id}` : `/chat/${first.id}`);
+      navigate(first.type === "paper" ? `/paper/${encodeURIComponent(first.paper_id ?? "")}/${first.id}` : `/chat/${first.id}`);
       return;
     }
     const c = await create({ type: "general", providerId: defaultProviderId ?? undefined });
