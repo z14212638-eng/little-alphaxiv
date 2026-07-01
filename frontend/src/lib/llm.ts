@@ -197,21 +197,36 @@ export async function runConversation(opts: {
         }
       } else if (tc.function.name === "web_search") {
         callbacks.onStatus?.("Web searching…");
-        const res = await webSearch(args.query ?? "", 8);
-        const toolMsg: ChatMessage = {
-          role: "tool",
-          tool_call_id: tc.id,
-          name: "web_search",
-          content: JSON.stringify(res.results),
-        };
-        apiMessages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          name: "web_search",
-          content: JSON.stringify(res.results),
-        });
-        newMessages.push(toolMsg);
-        callbacks.onToolMessage?.(toolMsg);
+        try {
+          const res = await webSearch(args.query ?? "", args.max_results ?? 8);
+          let content: string;
+          if (!res.configured) {
+            // Backend has no ANYSEARCH_API_KEY — tell the model to fall back to
+            // the academic tools instead of retrying web_search on every turn.
+            content =
+              "web_search is not configured on the backend (set ANYSEARCH_API_KEY). " +
+              "Use search_arxiv / search_openalex / search_semantic_scholar instead.";
+          } else {
+            // Surface a backend message (e.g. upstream anysearch failure) ahead
+            // of the (possibly empty) results so the model can explain + fall back.
+            const results = JSON.stringify(res.results);
+            content = res.message ? `${res.message}\n${results}` : results;
+          }
+          const toolMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            name: "web_search",
+            content,
+          };
+          apiMessages.push({ role: "tool", tool_call_id: tc.id, name: "web_search", content });
+          newMessages.push(toolMsg);
+          callbacks.onToolMessage?.(toolMsg);
+        } catch (e: any) {
+          const msg = `web search failed (${e?.message ?? "error"}); try search_arxiv`;
+          apiMessages.push({ role: "tool", tool_call_id: tc.id, name: "web_search", content: msg });
+          newMessages.push({ role: "tool", tool_call_id: tc.id, name: "web_search", content: msg });
+          callbacks.onStatus?.("");
+        }
       } else {
         const toolMsg: ChatMessage = {
           role: "tool",

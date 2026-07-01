@@ -264,7 +264,7 @@ export async function searchSemanticScholar(
 export async function webSearch(
   query: string,
   maxResults = 8
-): Promise<{ results: any[]; configured: boolean }> {
+): Promise<{ results: any[]; configured: boolean; message?: string }> {
   const r = await fetch(
     `${BASE}/api/websearch?q=${encodeURIComponent(query)}&max_results=${maxResults}`
   );

@@ -103,13 +103,18 @@ export function buildSearchTools(sources: {
     function: {
       name: "web_search",
       description:
-        "General web search (via anysearch) for non-academic information: " +
-        "recent news, blog posts, people, products, or anything not an academic paper. " +
-        "Use the paper-search tools (search_arxiv / search_openalex / search_semantic_scholar) for finding papers.",
+        "General web search (via anysearch). Returns titles, URLs, and snippets. " +
+        "Use it as a FALLBACK when the academic paper-search tools (search_arxiv / " +
+        "search_openalex / search_semantic_scholar) return nothing or can't find the " +
+        "paper the user asked about — e.g. IEEE, ACM, Springer, paywalled, or other " +
+        "non-arXiv papers, or when the user only has a DOI or a partial title. " +
+        "Also use it for non-academic questions (news, blogs, people, products). " +
+        "Non-arXiv links open externally (no in-app PDF preview); cite results by URL.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Web search query." },
+          query: { type: "string", description: "Web search query — concise keywords, a DOI, or a title." },
+          max_results: { type: "number", description: "Max results to return (default 8)." },
         },
         required: ["query"],
       },

@@ -294,10 +294,9 @@ little-alphaxiv/
 | arXiv 搜索 + 工具调用、PDF 预览、论文聊天 | ✅ 已验证 |
 | PDF 批注（矩形/画笔/文本/高亮） | ✅ 已验证 |
 | Zotero 集成（本地 + web） | ✅ 可用；按请求传凭据（v1） |
-| 通过 anysearch MCP 的 `web_search` | ⏳ 占位——真实接入待办 |
+| 通过 anysearch MCP 的 `web_search` | ✅ 已接入（需 `ANYSEARCH_API_KEY` 环境变量） |
 
-已知待办（非阻塞）见 [`CLAUDE.md`](./CLAUDE.md)。主要几项：真实 anysearch
-MCP 接入；`tools/` 里若干 Playwright 驱动仍用旧的 localStorage seed 模式；
+已知待办（非阻塞）见 [`CLAUDE.md`](./CLAUDE.md)。主要几项：`tools/` 里若干 Playwright 驱动仍用旧的 localStorage seed 模式；
 Zotero 路由仍按请求传凭据（功能正常，未来清理）。
 
 ## 🤝 贡献

@@ -316,10 +316,10 @@ little-alphaxiv/
 | arXiv search + tool-calling, PDF preview, paper chat | ✅ verified |
 | PDF annotations (rect/draw/text/highlight) | ✅ verified |
 | Zotero integration (local + web) | ✅ working; per-request creds (v1) |
-| `web_search` via anysearch MCP | ⏳ stub — real wiring TODO |
+| `web_search` via anysearch MCP | ✅ wired (needs `ANYSEARCH_API_KEY` env) |
 
 Known follow-ups (non-blocking) live in [`CLAUDE.md`](./CLAUDE.md). Notable ones:
-real anysearch MCP wiring; a handful of Playwright drivers in `tools/` still use
+a handful of Playwright drivers in `tools/` still use
 the old localStorage seed pattern; the Zotero router still takes per-request
 creds (functional, future cleanup).
 
