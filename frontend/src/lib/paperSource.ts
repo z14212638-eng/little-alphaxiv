@@ -3,6 +3,7 @@
 // user's enabled search sources. All side-effect-free so they're unit-testable.
 
 import type { Paper, ToolDef } from "../types";
+import { extractArxivId } from "./arxiv";
 
 /** Stable opaque id used as IDB key + route param + React key. arXiv id wins
  *  (it opens the existing /api/pdf path); else DOI; else the unique landing-page
@@ -33,6 +34,64 @@ export function openTarget(p: Paper): OpenTarget {
   if (p.oa_pdf_url) return { kind: "oa", id: resolvePaperId(p), url: p.oa_pdf_url };
   const externalUrl = p.external_url || (p.doi ? `https://doi.org/${p.doi}` : "");
   return { kind: "unfetchable", id: resolvePaperId(p), externalUrl: externalUrl || undefined };
+}
+
+/** A single web_search (anysearch) result, as returned by the backend
+ *  /api/websearch endpoint (parsed from anysearch's markdown). */
+export interface WebSearchResult {
+  rank?: number;
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** Snippet abstract cap — mirrors the PaperCard preview (240) + ellipsis. */
+const WEB_SNIPPET_CAP = 240;
+
+/** Convert web_search results into Paper objects so they render as PaperCards.
+ *  Non-arXiv results have no arxiv_id and no OA PDF, so openTarget() classifies
+ *  them as "unfetchable" -> the 3-button card (Upload Local PDF / Import from
+ *  Zotero / Open source page). DOI is extracted from doi.org/<doi> or
+ *  <host>/doi/<doi> URLs when present. arXiv URLs are promoted to fetchable
+ *  in-app cards. Results with no usable URL are dropped (a card with no link
+ *  has nowhere to send the user). */
+export function webToPapers(results: WebSearchResult[]): Paper[] {
+  const out: Paper[] = [];
+  for (const r of results) {
+    const url = (r.url || "").trim();
+    if (!url) continue;
+    const arxivId = extractArxivId(url);
+    const doi = extractDoi(url);
+    const snippet = (r.snippet || "").trim();
+    const abstract =
+      snippet.length > WEB_SNIPPET_CAP ? `${snippet.slice(0, WEB_SNIPPET_CAP)}…` : snippet;
+    out.push({
+      arxiv_id: arxivId ?? "",
+      title: (r.title || "").trim() || url,
+      authors: [],
+      abstract,
+      pdf_url: "",
+      abs_url: "",
+      published: "",
+      primary_category: "",
+      source: "web",
+      ...(doi ? { doi } : {}),
+      // Keep the landing URL even when a DOI is extracted, so the "Open source
+      // page" button goes to the page the user actually saw (ACM/IEEE/etc.),
+      // not a bare doi.org redirect.
+      external_url: url,
+    });
+  }
+  return out;
+}
+
+/** Extract a lowercased DOI from a URL. Matches doi.org/<doi> and the common
+ *  publisher path /doi/<doi> (ACM, IEEE, Springer). Strips a trailing query
+ *  string / fragment. Returns null when no DOI is present. */
+function extractDoi(url: string): string | undefined {
+  const m = url.match(/(?:doi\.org\/|\/doi\/)(10\.\d{4,9}\/[^\s?#]+)/i);
+  if (!m) return undefined;
+  return m[1].replace(/\/+$/, "").toLowerCase();
 }
 
 /** Build the LLM tool list for the current turn. arXiv is always present;
@@ -76,7 +135,10 @@ export function buildSearchTools(sources: {
           "paper the user asked about — e.g. IEEE, ACM, Springer, paywalled, or other " +
           "non-arXiv papers, or when the user only has a DOI or a partial title. " +
           "Also use it for non-academic questions (news, blogs, people, products). " +
-          "Non-arXiv links open externally (no in-app PDF preview); cite results by URL.",
+          "Each result surfaces as a paper card the user can act on: arXiv URLs open the " +
+          "in-app preview, every other result shows Upload Local PDF / Import from Zotero / " +
+          "Open source page buttons. Summarize the most relevant results in 1-2 sentences " +
+          "each; you do NOT need to repeat the URLs in your text.",
         parameters: {
           type: "object",
           properties: {

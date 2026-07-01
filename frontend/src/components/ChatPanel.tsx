@@ -565,7 +565,7 @@ const MessageRow = memo(function MessageRow({
     return (
       <div className="msg msg-tool">
         {showPaperLinks &&
-          papers.map((p) => <PaperCard key={p.arxiv_id || p.doi || `p${papers.indexOf(p)}`} paper={p} onClick={() => onOpenPaper(p)} />)}
+          papers.map((p) => <PaperCard key={p.arxiv_id || p.doi || p.external_url || `p${papers.indexOf(p)}`} paper={p} onClick={() => onOpenPaper(p)} />)}
       </div>
     );
   }

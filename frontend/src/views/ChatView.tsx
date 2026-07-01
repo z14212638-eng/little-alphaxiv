@@ -23,7 +23,7 @@ export function buildGeneralSystemPrompt(sources: { openalex: boolean; s2: boole
     ? `You also have ${extras.join(" and ")} for broader or published-literature searches; prefer the most relevant source per query.`
     : "";
   const webLine = sources.anysearch
-    ? `\nYou also have web_search (general web search via anysearch) — your 2nd source after arXiv. Use it as a FALLBACK when the paper-search tools return nothing or can't find the paper the user asked about (e.g. IEEE/ACM/Springer, paywalled, non-arXiv, or when the user only has a DOI or partial title). web_search returns titles, URLs, and snippets; non-arXiv links open externally, so cite them by URL. It also works for non-academic questions (news, blogs, people, products).`
+    ? `\nYou also have web_search (general web search via anysearch) — your 2nd source after arXiv. Use it as a FALLBACK when the paper-search tools return nothing or can't find the paper the user asked about (e.g. IEEE/ACM/Springer, paywalled, non-arXiv, or when the user only has a DOI or partial title). web_search returns titles, URLs, and snippets; each result surfaces as a paper card the user can act on — arXiv URLs open the in-app preview, every other result shows Upload Local PDF / Import from Zotero / Open source page buttons. Summarize the most relevant results in 1-2 sentences each; you don't need to repeat the URLs in your text. web_search also works for non-academic questions (news, blogs, people, products).`
     : "";
   return `You are a helpful research assistant integrated into a paper-reading app.
 Help the user find academic papers using the search_arxiv tool (always available).

@@ -8,7 +8,7 @@
 
 import { streamChat, completeChat, searchArxiv, webSearch, searchOpenAlex, searchSemanticScholar } from "./api";
 import type { ChatMessage, Paper, Provider, TokenUsage } from "../types";
-import { buildSearchTools } from "./paperSource";
+import { buildSearchTools, webToPapers } from "./paperSource";
 
 interface LoopCallbacks {
   onAssistantStart?: () => void; // a new assistant message is beginning (clear stream buffer)
@@ -207,9 +207,13 @@ export async function runConversation(opts: {
             args.max_results ?? 8,
             searchSourceCreds?.anysearch?.apiKey
           );
-          // configured is always true now (anonymous works); surface a backend
-          // message (e.g. upstream anysearch failure) ahead of the results so the
-          // model can explain + fall back to academic tools if results are empty.
+          // Convert web results into Paper objects so they render as cards:
+          // arXiv URLs open in-app; everything else renders the 3-button
+          // unfetchable card (Upload Local PDF / Import from Zotero / Open
+          // source page). Feed the model a compact text summary too, so it
+          // can summarize the findings in its reply without re-citing raw URLs.
+          const papers = webToPapers(res.results);
+          callbacks.onPapers?.(papers);
           const results = JSON.stringify(res.results);
           const content = res.message ? `${res.message}\n${results}` : results;
           const toolMsg: ChatMessage = {
@@ -217,6 +221,7 @@ export async function runConversation(opts: {
             tool_call_id: tc.id,
             name: "web_search",
             content,
+            ...(papers.length ? { ui: { papers } } : {}),
           };
           apiMessages.push({ role: "tool", tool_call_id: tc.id, name: "web_search", content });
           newMessages.push(toolMsg);
