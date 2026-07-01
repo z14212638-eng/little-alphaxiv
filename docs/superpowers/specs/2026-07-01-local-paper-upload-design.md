@@ -126,6 +126,17 @@ New `+ Open Local Paper` button in the left sidebar, directly below `+ New Chat`
    fills the form.
 7. `[Looks good, open paper]` → `navigate(/paper/{paperId})`.
 
+   **Sidebar / thread title on open:** `PaperView` titles the new thread with
+   the paper's real title (`paperThreadTitle()` in `lib/paperMeta.ts`, reusing
+   `hasRealTitle`), so the sidebar shows e.g. "Attention Is All You Need" — not
+   the opaque `sha256:<hash>` id — from the moment the paper opens. The sidebar
+   paper-group label likewise resolves from the paper cache (`db.getPaper`) via
+   `paperGroupLabel()` in `Sidebar.tsx`, so a row previously titled
+   `📄 sha256:…` self-heals to the real title on the next sidebar load. The
+   first user message still retitles the thread via `maybeSummarizeTitle` (the
+   standard title-generation flow). See the sidebar title design doc for the
+   full resolution chain.
+
 ### 5.3 Zotero tab
 
 1. Search box (+ optional collection dropdown). Calls existing `GET /api/zotero/items?q=…`.

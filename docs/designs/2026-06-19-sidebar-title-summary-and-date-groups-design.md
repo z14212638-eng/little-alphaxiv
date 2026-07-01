@@ -50,7 +50,33 @@ entry sat in one flat MRU list.
   unused until now). General chats + paper groups are bucketed by
   `updated_at`.
 
-### 3. Process
+### 3. Paper-group label: the paper's real title, not the bare id
+
+The sidebar groups all threads for one `paper_id` into a single row (see
+`Sidebar.tsx` → `paperGroups`). The row's label is **not** the bare paper id —
+it resolves to the paper's real title so an opaque id like `sha256:<hash>` (a
+locally-uploaded PDF with no DOI; see backend `paper_uploads.py`) never reaches
+the UI.
+
+Resolution order (`paperGroupLabel(paperId, cachedTitle, rep)` in `Sidebar.tsx`):
+
+1. The paper's cached title, looked up via `db.getPaper(paperId)` inside a
+   per-paper-id-set `useEffect`. This heals rows created before this fix —
+   previously titled `📄 sha256:…` — to the real title on the next sidebar
+   load, without waiting for the user to ask a question.
+2. The most-recent thread's own title (the LLM summary from §1), when it's a
+   real title.
+3. `📄 <paperId>` fallback — only when no title is known yet (e.g. a bare-id
+   arXiv stub opened while arXiv is unreachable).
+
+New paper threads are titled the same way at creation: `PaperView` calls
+`paperThreadTitle(p, arxivId)` (`lib/paperMeta.ts`, reuses `hasRealTitle`) at
+both creation sites (the init effect + `handleNewConversation`). The first user
+message then retitles the thread to the LLM summary via `maybeSummarizeTitle`
+(unchanged). So a freshly-opened uploaded PDF shows its real title in the
+sidebar immediately — not `📄 sha256:179…` until the user asks a question.
+
+### 4. Process
 
 Implemented in an isolated worktree off `origin/main` (the main worktree
 held another agent's uncommitted model-list/codebox work, which this branch
@@ -67,7 +93,8 @@ title-generation requests with distinct general/paper canned titles.
 - `frontend/src/lib/llm.ts` — `generateConversationTitle()`, `cleanTitle()`
 - `frontend/src/lib/dates.ts` (+ `dates.test.ts`) — `groupByDate()`
 - `frontend/src/components/ChatPanel.tsx` — `maybeSummarizeTitle()` + first-turn wiring
-- `frontend/src/components/Sidebar.tsx` — date-grouped render
+- `frontend/src/components/Sidebar.tsx` — date-grouped render + `paperGroupLabel()` + paper-cache title `useEffect`
+- `frontend/src/lib/paperMeta.ts` — `paperThreadTitle()` (titles new paper threads from the cached real title)
 - `tools/mock_llm.py` — title-request handling
 - `tools/drive_titles.py` (new), `tools/drive_fixes.py` — verification
 
