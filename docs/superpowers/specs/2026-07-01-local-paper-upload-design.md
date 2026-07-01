@@ -163,6 +163,19 @@ just stores the metadata dict the frontend sends.
 The `[Try LLM enrichment]` button covers the gap when Info metadata is wrong/empty (common for
 academic PDFs); `[Try DOI lookup]` covers the case where a DOI is embedded.
 
+**Implementation notes (verified 2026-07-01 against arXiv PDF 2511.21690v1):**
+- pdf.js parks custom Info-dict keys (DOI, arXivID, License) under `info.Custom`, NOT the
+  top-level `info.DOI` (pypdf reads them at the top level, which misleads during diagnosis —
+  the browser-side pdf.js layout differs). `parsePdf` reads both `info.DOI` and
+  `info.Custom.DOI`, normalizes the URL form (`https://doi.org/...` → bare lowercase DOI),
+  and if only `arXivID` is present synthesizes `10.48550/arxiv.<id>`.
+- arXiv PDFs with a figure-heavy page 1 may have NO "Abstract" keyword on page 1 (the text
+  run is reordered; the abstract lands on page 2). `parsePdf` sweeps pages 1–3 for an
+  `Abstract ... (Keywords|Index Terms|Introduction)` block instead of page 1 only.
+- `[Try DOI lookup]` is NOT implemented in v1 (no backend by-DOI endpoint); `[Try LLM
+  enrichment]` is the gap-filler. The LLM reply is often wrapped in ```json fences — extract
+  the `{...}` substring before `JSON.parse`, and surface the real error message on failure.
+
 ## 6. "Can't get PDF" fallback (D4, UI-determined)
 
 ### 6.1 Unfetchable PaperCard
