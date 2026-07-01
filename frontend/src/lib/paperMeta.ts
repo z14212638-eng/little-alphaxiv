@@ -27,6 +27,20 @@ export function hasRealTitle(p: { title?: string } | null | undefined, arxivId: 
   return !!t && t !== arxivId;
 }
 
+/** Title for a freshly-created paper thread: the paper's real title when it's
+ *  known, else the `📄 <id>` sentinel (only a placeholder until the first user
+ *  message retitles the thread — see ChatPanel.maybeSummarizeTitle).
+ *
+ *  Why this exists: for a locally-uploaded PDF with no DOI, the paper id is
+ *  `sha256:<hash>` (see backend paper_uploads.py). PaperView used to title
+ *  every new thread `📄 <arxivId>`, so the sidebar showed a jarring
+ *  `📄 sha256:179…` row until the user asked a question. Prefer the real title
+ *  whenever the cache has one; the sentinel stays only when metadata isn't
+ *  cached yet (e.g. bare-id arXiv stub opened offline). */
+export function paperThreadTitle(p: { title?: string } | null | undefined, arxivId: string): string {
+  return hasRealTitle(p, arxivId) ? (p!.title as string).trim() : `📄 ${arxivId}`;
+}
+
 /** Ensure the cached Paper record for `arxivId` has real arXiv metadata. If it
  *  already does, returns it unchanged. Otherwise fetches metadata from arXiv,
  *  merges it into IDB (preserving full_text / oa_pdf_url / existing non-empty

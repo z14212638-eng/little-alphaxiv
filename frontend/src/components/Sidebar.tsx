@@ -13,12 +13,15 @@
 //   - Entries are grouped under alphaxiv-style date headers (Today / Yesterday
 //     / Previous 7 Days / Previous 30 Days / <Month Year>) via groupByDate.
 
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useConversations } from "../store/conversations";
 import { useSettings } from "../store/settings";
 import { useUi } from "../store/ui";
 import { THEMES } from "../themes";
 import { groupByDate } from "../lib/dates";
+import * as db from "../lib/db";
+import { hasRealTitle } from "../lib/paperMeta";
 import type { Conversation } from "../types";
 import { Tooltip } from "./Tooltip";
 
@@ -29,6 +32,21 @@ type Item =
 /** Timestamp used to bucket a sidebar item into a date group. */
 function itemTs(it: Item): number {
   return it.kind === "general" ? it.conv.updated_at : it.rep.updated_at;
+}
+
+/** Sidebar label for a paper group: prefer the paper's real cached title (looked
+ *  up from the paper cache so a row created before this fix — titled
+ *  `📄 sha256:…` — heals without waiting for the user to ask a question), then
+ *  the most-recent thread's real title, then the `📄 <id>` fallback. */
+function paperGroupLabel(
+  paperId: string,
+  cachedTitle: string | undefined,
+  rep: Conversation,
+): string {
+  if (cachedTitle && hasRealTitle({ title: cachedTitle }, paperId)) return cachedTitle;
+  const t = rep.title;
+  if (t && t !== "Paper discussion" && !t.startsWith("📄")) return t;
+  return `📄 ${paperId}`;
 }
 
 export function Sidebar() {
@@ -84,6 +102,37 @@ export function Sidebar() {
   // Bucket into alphaxiv-style date groups (items are already MRU, so each
   // group's internal order is preserved).
   const grouped = groupByDate(items, itemTs);
+
+  // Resolve each paper group's real title from the paper cache (so a row titled
+  // `📄 sha256:…` from before this fix heals to the paper's actual title).
+  const paperIdKey = Array.from(paperGroups.keys()).sort().join("\n");
+  const [paperTitles, setPaperTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const ids = paperIdKey ? paperIdKey.split("\n") : [];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        ids.map(async (id): Promise<[string, string]> => {
+          try {
+            const p = await db.getPaper(id);
+            return [id, p?.title ?? ""];
+          } catch {
+            return [id, ""];
+          }
+        }),
+      );
+      if (cancelled) return;
+      setPaperTitles((prev) => {
+        const next = { ...prev };
+        for (const [id, t] of entries) if (t) next[id] = t;
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+    // paperIdKey is a stable string snapshot of the current paper-id set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paperIdKey]);
 
   if (collapsed) {
     return (
@@ -145,7 +194,7 @@ export function Sidebar() {
               }
               // paper group
               const active = it.threads.some((t) => t.id === activeId);
-              const title = it.rep.title && it.rep.title !== "Paper discussion" ? it.rep.title : `📄 ${it.paperId}`;
+              const title = paperGroupLabel(it.paperId, paperTitles[it.paperId], it.rep);
               return (
                 <div
                   key={`paper-${it.paperId}`}

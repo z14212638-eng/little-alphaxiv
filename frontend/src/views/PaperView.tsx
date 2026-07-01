@@ -22,7 +22,7 @@ import { useUi } from "../store/ui";
 import { useAnnotations } from "../store/annotations";
 import { pdfUrlForOa, paperUploadUrl } from "../lib/api";
 import * as db from "../lib/db";
-import { ensurePaperMeta, hasRealTitle } from "../lib/paperMeta";
+import { ensurePaperMeta, hasRealTitle, paperThreadTitle } from "../lib/paperMeta";
 import type { StylePreset } from "../types";
 
 export function PaperView() {
@@ -101,17 +101,25 @@ export function PaperView() {
       return;
     }
     // No thread yet — create an empty one (in-memory until first message).
-    create({
-      type: "paper",
-      paperId: arxivId,
-      title: `📄 ${arxivId}`,
-      reuseEmpty: true,
-      providerId: defaultProviderId ?? undefined,
-    }).then((c) => {
-      setActive(c.id);
-      setConvId(c.id);
-      navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
-    });
+    // Title it with the paper's real title when known, so the sidebar shows
+    // e.g. "Attention Is All You Need" instead of `📄 sha256:…` for a
+    // locally-uploaded PDF. Falls back to `📄 <id>` only when metadata isn't
+    // cached yet; the first user message retitles the thread anyway.
+    db.getPaper(arxivId)
+      .then((p) =>
+        create({
+          type: "paper",
+          paperId: arxivId,
+          title: paperThreadTitle(p, arxivId),
+          reuseEmpty: true,
+          providerId: defaultProviderId ?? undefined,
+        })
+      )
+      .then((c) => {
+        setActive(c.id);
+        setConvId(c.id);
+        navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arxivId, loaded]);
 
@@ -144,20 +152,21 @@ export function PaperView() {
     ? PAPER_SYSTEM_PREAMBLE(arxivId!) + `\n\n=== PAPER FULL TEXT ===\n${fullText}\n=== END ===`
     : PAPER_SYSTEM_PREAMBLE(arxivId!) + `\n\n[Note: full paper text is still loading; answer based on what you can.]`;
 
-  function handleNewConversation() {
+  async function handleNewConversation() {
     if (!arxivId) return;
-    create({
+    // See note above: prefer the paper's real title over `📄 <id>`.
+    const p = await db.getPaper(arxivId);
+    const c = await create({
       type: "paper",
       paperId: arxivId,
-      title: `📄 ${arxivId}`,
+      title: paperThreadTitle(p, arxivId),
       reuseEmpty: true, // reuse an existing empty thread if present
       providerId: defaultProviderId ?? undefined,
-    }).then((c) => {
-      setActive(c.id);
-      setConvId(c.id);
-      navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
-      setShowHistory(false);
     });
+    setActive(c.id);
+    setConvId(c.id);
+    navigate(`/paper/${encodeURIComponent(arxivId)}/${c.id}`, { replace: true });
+    setShowHistory(false);
   }
 
   function handleSelectConversation(id: string) {
