@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePaperId, openTarget, buildSearchTools } from "./paperSource";
+import { resolvePaperId, openTarget, buildSearchTools, webToPapers } from "./paperSource";
 import type { Paper } from "../types";
 
 function p(over: Partial<Paper> = {}): Paper {
@@ -80,5 +80,60 @@ describe("buildSearchTools", () => {
   it("orders arXiv → web_search → openalex → s2 when all enabled", () => {
     const names = buildSearchTools({ openalex: true, s2: true, anysearch: true }).map((t) => t.function.name);
     expect(names).toEqual(["search_arxiv", "web_search", "search_openalex", "search_semantic_scholar"]);
+  });
+});
+
+describe("webToPapers", () => {
+  it("maps a plain non-arXiv web result (title/url/snippet) to an unfetchable Paper with external_url + snippet abstract", () => {
+    const papers = webToPapers([
+      { rank: 1, title: "A Survey of 5G", url: "https://dl.acm.org/doi/10.1109/COMST.2016.2532458", snippet: "Comprehensive survey…" },
+    ]);
+    expect(papers).toHaveLength(1);
+    const p0 = papers[0];
+    expect(p0.title).toBe("A Survey of 5G");
+    expect(p0.arxiv_id).toBe("");
+    expect(p0.source).toBe("web");
+    expect(p0.external_url).toBe("https://dl.acm.org/doi/10.1109/COMST.2016.2532458");
+    expect(p0.abstract).toBe("Comprehensive survey…");
+    // DOI was extracted from the /doi/<doi> path and lowercased.
+    expect(p0.doi).toBe("10.1109/comst.2016.2532458");
+    // No OA PDF -> unfetchable 3-button card, source link = the landing url.
+    const t = openTarget(p0);
+    expect(t.kind).toBe("unfetchable");
+    if (t.kind === "unfetchable") expect(t.externalUrl).toBe("https://dl.acm.org/doi/10.1109/COMST.2016.2532458");
+  });
+
+  it("extracts a bare doi.org DOI", () => {
+    const [p0] = webToPapers([{ rank: 1, title: "X", url: "https://doi.org/10.1000/abc", snippet: "s" }]);
+    expect(p0.doi).toBe("10.1000/abc");
+  });
+
+  it("leaves doi undefined when the URL has no DOI", () => {
+    const [p0] = webToPapers([{ rank: 1, title: "Blog post", url: "https://example.com/blog/5g", snippet: "s" }]);
+    expect(p0.doi).toBeUndefined();
+    expect(p0.external_url).toBe("https://example.com/blog/5g");
+  });
+
+  it("promotes an arXiv web result to a fetchable in-app card (arxiv_id set)", () => {
+    const [p0] = webToPapers([{ rank: 1, title: "Cool paper", url: "https://arxiv.org/abs/2401.12345", snippet: "s" }]);
+    expect(p0.arxiv_id).toBe("2401.12345");
+    expect(openTarget(p0).kind).toBe("arxiv");
+  });
+
+  it("strips a trailing query/fragment from an extracted DOI", () => {
+    const [p0] = webToPapers([{ rank: 1, title: "X", url: "https://doi.org/10.1000/abc?ref=foo", snippet: "s" }]);
+    expect(p0.doi).toBe("10.1000/abc");
+  });
+
+  it("drops results with no usable URL", () => {
+    expect(webToPapers([{ rank: 1, title: "X", url: "", snippet: "s" }])).toHaveLength(0);
+    expect(webToPapers([{ rank: 1, title: "X", url: "   ", snippet: "s" }])).toHaveLength(0);
+  });
+
+  it("caps the snippet abstract length", () => {
+    const long = "x".repeat(500);
+    const [p0] = webToPapers([{ rank: 1, title: "X", url: "https://example.com/p", snippet: long }]);
+    expect(p0.abstract.length).toBeLessThanOrEqual(243); // 240 + ellipsis
+    expect(p0.abstract.endsWith("…")).toBe(true);
   });
 });

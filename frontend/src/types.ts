@@ -74,8 +74,10 @@ export interface Paper {
   primary_category: string;
   /** Which search source surfaced this paper. arXiv results omit it (legacy).
    *  "upload" / "zotero" mark user-private papers brought in via the Open Local
-   *  Paper dialog (their PDF bytes live server-side, per-user). */
-  source?: "arxiv" | "openalex" | "s2" | "upload" | "zotero";
+   *  Paper dialog (their PDF bytes live server-side, per-user).
+   *  "web" marks a non-arXiv result from web_search (anysearch) — no in-app PDF,
+   *  so it renders the 3-button unfetchable card. */
+  source?: "arxiv" | "openalex" | "s2" | "upload" | "zotero" | "web";
   /** DOI (lowercased, no URL wrapper) when the source provides one. */
   doi?: string;
   /** Direct open-access PDF URL for non-arXiv papers, when available. */

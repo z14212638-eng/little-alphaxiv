@@ -13,6 +13,7 @@ const SOURCE_BADGE: Record<string, string> = {
   s2: "S2",
   upload: "Upload",
   zotero: "Zotero",
+  web: "Web",
 };
 
 export function PaperCard({ paper, onClick }: { paper: Paper; onClick: () => void }) {
