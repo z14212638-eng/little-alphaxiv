@@ -160,3 +160,76 @@ async def test_import_explicit_attachment_key(client, tmp_path, monkeypatch):
             )
         ).first()
     assert up.zotero_attachment_key == "att-pinned"
+
+
+# --------------------------------------------------------------------------- #
+# Local-first status endpoint: tells the UI whether local-disk PDF import is
+# usable, with an actionable hint when it isn't. Drives the Settings → Zotero
+# status line + the Import-dialog hint so Docker users who skipped the env vars
+# see WHY imports fall back to the slow cloud path.
+# --------------------------------------------------------------------------- #
+async def _lf(client, monkeypatch, *, local_base, alive, storage_host="", mount_dir=None):
+    """Call /api/zotero/local-first-status with the module config mocked."""
+    from app.routers import zotero as zmod
+    monkeypatch.setattr(zmod, "_LOCAL_BASE", local_base)
+    monkeypatch.setattr(zmod, "_STORAGE_MAP_HOST", storage_host)
+    if mount_dir is not None:
+        monkeypatch.setattr(zmod, "_STORAGE_CONTAINER_PREFIX", str(mount_dir).replace("\\", "/"))
+    async def _fake_alive():
+        return alive
+    monkeypatch.setattr(zmod, "_local_first_alive", _fake_alive)
+    await _register(client, "lfuser")
+    r = await client.get("/api/zotero/local-first-status")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_local_first_status_disabled(client, monkeypatch):
+    # LAX_ZOTERO_LOCAL_BASE empty -> local-first off, hint explains.
+    body = await _lf(client, monkeypatch, local_base=None, alive=False)
+    assert body["available"] is False
+    assert body["configured"] is False
+    assert body["hint"]
+
+
+async def test_local_first_status_native_active(client, monkeypatch, tmp_path):
+    # Native (default base) + Zotero running -> fully active, no hint.
+    body = await _lf(client, monkeypatch, local_base="http://127.0.0.1:23119", alive=True)
+    assert body["available"] is True
+    assert body["configured"] is True
+    assert body["hint"] is None
+
+
+async def test_local_first_status_native_zotero_off(client, monkeypatch):
+    # Native + Zotero not running -> available False, hint says start Zotero.
+    body = await _lf(client, monkeypatch, local_base="http://127.0.0.1:23119", alive=False)
+    assert body["available"] is False
+    assert body["configured"] is False
+    assert "Zotero" in body["hint"]
+
+
+async def test_local_first_status_docker_active(client, monkeypatch, tmp_path):
+    # Docker (overridden base) + storage mounted -> active.
+    body = await _lf(client, monkeypatch, local_base="http://host.docker.internal:23119",
+                     alive=True, storage_host="C:/Zotero/storage", mount_dir=tmp_path)
+    assert body["available"] is True
+    assert body["configured"] is True
+    assert body["hint"] is None
+
+
+async def test_local_first_status_docker_no_mount(client, monkeypatch, tmp_path):
+    # Docker + Zotero reachable but storage dir not mounted -> configured False,
+    # hint names LAX_ZOTERO_STORAGE_DIR.
+    body = await _lf(client, monkeypatch, local_base="http://host.docker.internal:23119",
+                     alive=True, storage_host="", mount_dir=tmp_path)
+    assert body["available"] is True
+    assert body["configured"] is False
+    assert "LAX_ZOTERO_STORAGE_DIR" in body["hint"]
+
+
+async def test_local_first_status_docker_unreachable(client, monkeypatch):
+    # Docker + can't reach host Zotero -> available False, hint mentions Docker env.
+    body = await _lf(client, monkeypatch, local_base="http://host.docker.internal:23119", alive=False)
+    assert body["available"] is False
+    assert body["configured"] is False
+    assert "LAX_ZOTERO_LOCAL_BASE" in body["hint"]

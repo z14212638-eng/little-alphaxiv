@@ -1415,3 +1415,78 @@ async def list_item_attachments(
         )
     items, resolved = await list_pdf_attachments(creds, item_key)
     return JSONResponse(content={"results": items, "mode": resolved})
+
+
+# --------------------------------------------------------------------------- #
+# Local-first status: is the local-disk PDF path usable? Surfaced in Settings
+# → Zotero + the Import dialog so users who deployed Docker without the env
+# vars see WHY imports fall back to the slow cloud download, and how to fix it.
+# --------------------------------------------------------------------------- #
+async def _local_first_alive() -> bool:
+    """True if the local Zotero API at _LOCAL_BASE answers (with the spoofed
+    Host header). Distinct from _local_alive() (which pings the hardcoded
+    loopback for 'auto' mode resolution): this pings _LOCAL_BASE, which in
+    Docker is host.docker.internal. trust_env=False so a corporate proxy never
+    intercepts what should be a host/loopback call."""
+    if not _LOCAL_BASE:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=_PING_TIMEOUT, trust_env=False) as client:
+            r = await client.get(
+                f"{_LOCAL_BASE}/api/users/0/items?limit=1&format=keys",
+                headers={"User-Agent": _UA, "Host": _LOCAL_HOST_HEADER},
+            )
+        return r.status_code == 200
+    except httpx.RequestError:
+        return False
+
+
+def _local_first_is_docker() -> bool:
+    """Heuristic: the operator overrode LAX_ZOTERO_LOCAL_BASE away from the
+    native default → we're almost certainly in Docker (host.docker.internal)."""
+    return bool(_LOCAL_BASE) and _LOCAL_BASE.rstrip("/") != "http://127.0.0.1:23119"
+
+
+@router.get("/zotero/local-first-status")
+async def local_first_status(user: User = Depends(current_user)) -> Any:
+    """Report whether local-first PDF import is usable, with an actionable hint
+    when it isn't. Returns {available, configured, hint}.
+
+    - available: the local Zotero API at LAX_ZOTERO_LOCAL_BASE answers.
+    - configured: the storage path is resolvable — native reads the host path
+      directly (always configured when available); Docker needs LAX_ZOTERO_STORAGE_DIR
+      set + the /zotero-storage mount present.
+    - hint: non-null when local-first isn't fully working, explaining how to
+      enable it. Null when active."""
+    if not _LOCAL_BASE:
+        return JSONResponse(content={
+            "available": False, "configured": False,
+            "hint": "Local-first import is disabled (LAX_ZOTERO_LOCAL_BASE is empty). "
+                    "Imports use the Zotero cloud download, which can be slow or fail on some networks.",
+        })
+    available = await _local_first_alive()
+    is_docker = _local_first_is_docker()
+    if not available:
+        if is_docker:
+            hint = ("Local Zotero isn’t reachable from the container. Start the Zotero desktop app on "
+                    "the host, then set LAX_ZOTERO_LOCAL_BASE=http://host.docker.internal:23119 (and "
+                    "LAX_ZOTERO_STORAGE_DIR + the /zotero-storage mount) in deploy/.env — see the docs.")
+        else:
+            hint = ("Start the Zotero desktop app with “Allow other applications to communicate with "
+                    "Zotero” enabled (Preferences → Advanced). Running in Docker? Set "
+                    "LAX_ZOTERO_LOCAL_BASE + LAX_ZOTERO_STORAGE_DIR — see the docs.")
+        return JSONResponse(content={"available": False, "configured": False, "hint": hint})
+    # Local API is up.
+    if not is_docker:
+        # Native: the file:// path is read directly off the host filesystem.
+        return JSONResponse(content={"available": True, "configured": True, "hint": None})
+    # Docker: needs the storage dir mapped to the /zotero-storage mount.
+    mount_ok = bool(_STORAGE_MAP_HOST) and pathlib.Path(_STORAGE_CONTAINER_PREFIX).is_dir()
+    if mount_ok:
+        return JSONResponse(content={"available": True, "configured": True, "hint": None})
+    return JSONResponse(content={
+        "available": True, "configured": False,
+        "hint": ("Local Zotero is reachable but the storage dir isn’t mounted. Set "
+                 "LAX_ZOTERO_STORAGE_DIR to your Zotero storage folder and mount it read-only at "
+                 "/zotero-storage in docker-compose.yml — see the docs."),
+    })

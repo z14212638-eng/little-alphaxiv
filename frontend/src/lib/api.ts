@@ -847,6 +847,23 @@ export async function listZoteroAttachments(itemKey: string): Promise<{
   return r.json();
 }
 
+/** Local-first PDF import status: whether PDFs are read off the local Zotero
+ *  storage (fast, offline, quota-immune) vs falling back to the flaky S3 cloud
+ *  download. `hint` is actionable guidance when local-first isn't fully usable
+ *  (e.g. Docker deployed without LAX_ZOTERO_STORAGE_DIR). Drives the status
+ *  line in Settings → Zotero + the Import dialog. */
+export interface LocalFirstStatus {
+  available: boolean;
+  configured: boolean;
+  hint: string | null;
+}
+
+export async function zoteroLocalFirstStatus(): Promise<LocalFirstStatus> {
+  const r = await jfetch("/api/zotero/local-first-status");
+  if (!r.ok) throw new Error(await errText(r));
+  return r.json();
+}
+
 // ---- one-time browser → server migration ----
 
 export interface MigratePayload {
