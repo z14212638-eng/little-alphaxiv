@@ -19,6 +19,7 @@ No DB needed — the read endpoints are stateless proxies.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -56,13 +57,22 @@ class _FakeResp:
             yield self._body
 
 
+class _Hang:
+    """Script marker: a get() that sleeps past the attempt cap (simulates the
+    pre-headers TCP stall where httpx's read timeout never starts). The
+    per-attempt asyncio.wait_for must abort it via TimeoutError."""
+
+    def __init__(self, seconds: float = 60.0):
+        self.seconds = seconds
+
+
 class _FakeClient:
     """Stand-in for httpx.AsyncClient whose `.get()` yields a scripted
     sequence (one item per attempt). Shared class-level state so the fresh
     client instance created on each retry continues the same script.
     Records the `proxy` kwarg so the LAX_ZOTERO_PROXY wiring can be asserted."""
 
-    script: list = []  # each item: a _FakeResp or a BaseException to raise
+    script: list = []  # each item: a _FakeResp / BaseException / _Hang
     calls: int = 0
     last_proxy: object = "UNSET"  # proxy= kwarg from the most recent construction
 
@@ -79,6 +89,9 @@ class _FakeClient:
         idx = _FakeClient.calls
         _FakeClient.calls += 1
         item = _FakeClient.script[idx]
+        if isinstance(item, _Hang):
+            await asyncio.sleep(item.seconds)  # would block forever (in real code)
+            return _FakeResp(200, body=b"")  # not reached when wait_for fires
         if isinstance(item, BaseException):
             raise item
         return item
@@ -360,5 +373,36 @@ async def test_download_404_not_retried(monkeypatch):
     assert ei.value.status_code == 502
     assert "404" in ei.value.detail
     assert _FakeClient.calls == 1  # no retry on a permanent 4xx
+
+
+async def test_download_pre_headers_stall_retries_then_succeeds(monkeypatch):
+    # THE user symptom: a pre-headers TCP stall (S3 host silently drops packets
+    # during the TLS handshake, before any response headers). httpx's read
+    # timeout never starts (no headers yet), so without the per-attempt
+    # asyncio.wait_for cap the call hangs ~5 min at the OS TCP timeout. The cap
+    # aborts the stalled attempt via TimeoutError, the retry hits a good moment,
+    # and the download succeeds — instead of hanging forever.
+    _script(monkeypatch, [_Hang(seconds=60.0), _FakeResp(200, body=PDF)])
+    monkeypatch.setattr(zotero, "_PDF_ATTEMPT_TIMEOUT_S", 0.05)  # abort fast in-test
+    data = await zotero.download_attachment_bytes(_download_creds(), "att1")
+    assert data == PDF
+    assert _FakeClient.calls == 2  # stalled attempt aborted, retry succeeded
+
+
+async def test_download_persistent_stall_surfaces_clear_error(monkeypatch):
+    # If BOTH attempts stall at the TCP layer (S3 persistently interfered with,
+    # as observed for this user on bad moments — direct AND proxy paths both
+    # hung ~5 min), surface a clear, actionable 502 instead of hanging ~10 min.
+    # The detail must tell the user how to recover (manual upload).
+    _script(monkeypatch, [_Hang(seconds=60.0), _Hang(seconds=60.0)])
+    monkeypatch.setattr(zotero, "_PDF_ATTEMPT_TIMEOUT_S", 0.05)
+    with pytest.raises(HTTPException) as ei:
+        await zotero.download_attachment_bytes(_download_creds(), "att1")
+    assert ei.value.status_code == 502
+    detail = ei.value.detail
+    assert isinstance(detail, str) and detail.strip()
+    assert "timed out" in detail.lower()
+    assert "Upload Local PDF" in detail  # actionable recovery hint
+    assert _FakeClient.calls == 2  # tried, retried once, gave up fast
 
 
