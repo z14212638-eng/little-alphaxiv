@@ -22,6 +22,7 @@ import {
   uploadPaper,
   importFromZotero,
   zoteroSearchItems,
+  zoteroLocalFirstStatus,
   completeChat,
   type UploadResult,
   type ZoteroItem,
@@ -302,8 +303,17 @@ function ZoteroTab({
   const [importing, setImporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [localFirst, setLocalFirst] = useState<{ available: boolean; configured: boolean; hint: string | null } | null>(null);
 
   const configured = !!(zotero.userId && zotero.apiKey && zotero.mode);
+
+  // Local-first status: when it's NOT active, imports fall back to the slow
+  // cloud download — show a hint so the user knows why + how to speed it up.
+  useEffect(() => {
+    let cancelled = false;
+    void zoteroLocalFirstStatus().then((s) => { if (!cancelled) setLocalFirst(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   async function search(e?: React.FormEvent) {
     e?.preventDefault();
@@ -355,6 +365,16 @@ function ZoteroTab({
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your Zotero library…" disabled={!configured || searching} />
         <button className="lpd-btn" type="submit" disabled={!configured || searching}>{searching ? "Searching…" : "Search"}</button>
       </form>
+      {configured && localFirst && !(localFirst.available && localFirst.configured) && (
+        <div className="lpd-hint">
+          ⚠ Importing uses Zotero’s cloud download, which can be slow or stall on some networks.
+          Enable <strong>local-first</strong> to read PDFs straight from your Zotero storage.{" "}
+          <a
+            href="/settings#zotero"
+            onClick={(e) => { e.preventDefault(); onDone(); navigate("/settings#zotero"); }}
+          >How to enable →</a>
+        </div>
+      )}
       <div className="lpd-results">
         {results.map((it) => (
           <div key={it.key} className="lpd-result">

@@ -32,6 +32,7 @@ export function SettingsView() {
   const setZotero = useSettings((s) => s.setZotero);
   const [zoteroTesting, setZoteroTesting] = useState(false);
   const [zoteroTestResult, setZoteroTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [localFirst, setLocalFirst] = useState<api.LocalFirstStatus | null>(null);
   const location = useLocation();
 
   // Account (recovery email). Hydrated from /api/auth/me; the email is the
@@ -81,6 +82,16 @@ export function SettingsView() {
     );
     return () => cancelAnimationFrame(raf);
   }, [location.hash]);
+
+  // Local-first PDF import status (server capability — independent of the
+  // user's Zotero creds). Fetched once on mount so the Settings → Zotero
+  // section can show whether PDF imports read off local disk or fall back to
+  // the slow cloud download, with the env vars to fix it.
+  useEffect(() => {
+    let cancelled = false;
+    void api.zoteroLocalFirstStatus().then((s) => { if (!cancelled) setLocalFirst(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   async function testZotero() {
     setZoteroTesting(true);
@@ -365,6 +376,15 @@ export function SettingsView() {
               {" "}(enable library + write access). Your userID is on the{" "}
               <a href="https://www.zotero.org/settings/keys" target="_blank" rel="noopener noreferrer">same settings page</a>.
             </div>
+            {localFirst && (
+              <div className={`provider-detail ${localFirst.available && localFirst.configured ? "zotero-ok" : "zotero-err"}`}>
+                {localFirst.available && localFirst.configured
+                  ? "✓ Local-first PDF import active — imports read PDFs straight off your Zotero storage (fast, offline, and unaffected by cloud-storage quota)."
+                  : <>⚠ {localFirst.hint}{" "}
+                    <a href="https://github.com/DylanUnicorn/little-alphaxiv#zotero-local-first-import" target="_blank" rel="noopener noreferrer">How to enable →</a>
+                  </>}
+              </div>
+            )}
           </div>
         </div>
 
